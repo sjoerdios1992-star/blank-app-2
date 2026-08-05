@@ -21,7 +21,6 @@ def load_and_transform_data():
     conn = st.connection("gsheets", type=GSheetsConnection)
     
     # We lezen de exacte rij-range van Callie NL uit (Rij 88 t/m 106)
-    # Geen header meegeven omdat de metrics verticaal staan
     raw_df = conn.read(
         spreadsheet=SHEET_URL,
         skiprows=87,
@@ -30,10 +29,8 @@ def load_and_transform_data():
     )
     
     # Kolom 0 bevat de KPI-namen (Superset SEO销售额, etc.)
-    # Kolom 1 en verder bevatten de datums en de cijfers
     metrics_names = raw_df.iloc[:, 0].tolist()
     
-    # Filter lege namen eruit
     data_matrix = raw_df.iloc[:, 1:]
     
     # Kantel de tabel om (Transponeren): Datums worden rijen, KPI's worden kolommen
@@ -43,10 +40,9 @@ def load_and_transform_data():
     df_transposed.columns = metrics_names
     
     # Maak een nette datumkolom van de eerste datumpunt
-    # De eerste rij van onze selectie bevat de datums
     df_transposed = df_transposed.rename(columns={df_transposed.columns[0]: "Datum_Raw"})
     
-    # Zet de datumkolom om naar echt datumformaat (fouten negeren bij lege kolommen)
+    # Zet de datumkolom om naar echt datumformaat
     df_transposed['Datum'] = pd.to_datetime(df_transposed['Datum_Raw'], errors='coerce')
     
     # Verwijder rijen waar geen geldige datum in staat
@@ -55,11 +51,12 @@ def load_and_transform_data():
     # Zet alle numerieke kolommen om van tekst naar getallen
     numeric_cols = [c for c in df_transposed.columns if c not in ['Datum_Raw', 'Datum', '网站要事记']]
     for col in numeric_cols:
-        # Verwijder eventuele valuta-tekens (€, %, komma's) en zet om naar float
+        # Uitgebreide opschoning: verwijder €, $, %, komma's en spaties
         df_transposed[col] = (
             df_transposed[col]
             .astype(str)
             .str.replace('€', '', regex=False)
+            .str.replace('$', '', regex=False)
             .str.replace('%', '', regex=False)
             .str.replace(',', '', regex=False)
             .str.strip()
@@ -93,13 +90,13 @@ try:
     
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("GA4 SEO Omzet (销售额)", f"€ {latest.get('GA4 SEO销售额', 0):,.2f}")
+        st.metric("GA4 SEO Omzet", f"€ {latest.get('GA4 SEO销售额', 0):,.2f}")
         st.caption(f"Superset Omzet: € {latest.get('Superset SEO销售额', 0):,.2f}")
     with col2:
         st.metric("Totale Omzet Website", f"€ {latest.get('GA4 网站总销售额', 0):,.2f}")
         st.caption(f"Superset Aandeel: {latest.get('Superset 总销售额占比情况', 0)}%")
     with col3:
-        st.metric("SEO Verkeer (流量)", f"{int(latest.get('SEO流量', 0)):,}")
+        st.metric("SEO Verkeer", f"{int(latest.get('SEO流量', 0)):,}")
         st.caption(f"Blog Verkeer: {int(latest.get('SEO Blog流量', 0)):,}")
     with col4:
         st.metric("AI Assistant Verkeer", f"{int(latest.get('AI Assistant 流量', 0)):,}")
