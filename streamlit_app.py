@@ -1,112 +1,172 @@
 import streamlit as st
 import pandas as pd
+import plotly.express as px
+from streamlit_gsheets import GSheetsConnection
 
-# Pagina instellingen
+# -------------------- PAGINA INSTELLINGEN --------------------
 st.set_page_config(
-    page_title="Callie NL - Marketing & Sales Kanban",
+    page_title="Callie NL - Performance Dashboard",
     page_icon="📊",
     layout="wide"
 )
 
-# Titel en introductie
-st.title("📊 Callie NL — Performance Kanban Board")
-st.caption("Visueel overzicht van verkoop, bezoekers, SEO-prestaties en AI Assistant data.")
+st.title("📊 Callie NL — Performance Dashboard & Trends")
+st.caption("Data rechtstreeks uit Google Sheets (gefilterd op de Callie NL sectie).")
 
-# Sidebar: Mogelijkheid om cijfers live aan te passen
-st.sidebar.header("⚙️ Gegevens Invoeren / Aanpassen")
-st.sidebar.write("Pas hieronder de cijfers aan om het Kanban-board direct bij te werken:")
+# -------------------- DATA OPHALEN EN OMZETTEN --------------------
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1GLAGMkVx5DMXylG0bbdvkzuqTd8IVfDANhcRrAX6LFU/edit?usp=sharing"
 
-# Aanpasbare data met standaardwaarden gebaseerd op jouw kolommen
-with st.sidebar.form("metrics_form"):
-    st.subheader("💰 Verkoop & Omzet")
-    superset_seo_sales = st.number_input("Superset SEO 销售额 (€)", value=4500.0)
-    superset_share = st.number_input("Superset 总销售额占比情况 (%)", value=25.5)
-    ga4_seo_sales = st.number_input("GA4 SEO 销售额 (€)", value=4200.0)
-    ga4_total_sales = st.number_input("GA4 网站总销售额 (€)", value=16500.0)
-    ai_sales = st.number_input("AI Assistant 销售额 (€)", value=1250.0)
-
-    st.subheader("📈 Traffic & Bezoekers")
-    total_traffic = st.number_input("网站总流量 (Totaal)", value=35000)
-    seo_traffic = st.number_input("SEO 流量", value=12500)
-    seo_internal_traffic = st.number_input("SEO 站内流量", value=8900)
-    seo_blog_traffic = st.number_input("SEO Blog 流量", value=3600)
-    ai_traffic = st.number_input("AI Assistant 流量", value=1400)
-    bounce_rate = st.number_input("跳出率 Bounce Rate (%)", value=42.3)
-
-    st.subheader("🔍 SEO Status & Backlinks")
-    index_total = st.number_input("收录 (Geïndexeerd totaal)", value=450)
-    index_blog = st.number_input("Blog 收录 (Geïndexeerde blogs)", value=120)
-    backlinks = st.number_input("外链 (Backlinks)", value=1850)
-    referring_domains = st.number_input("外链域名广度 (Domein breedte)", value=310)
-
-    submitted = st.form_submit_button("Opslaan & Bijwerken")
-
-# -------------------- KANBAN BOARD INDELING --------------------
-
-col1, col2, col3 = st.columns(3)
-
-# KOLOM 1: VERKOOP & OMZET (Sales)
-with col1:
-    st.subheader("💰 Verkoop & Omzet")
-    st.markdown("---")
+@st.cache_data(ttl=60)
+def load_and_transform_data():
+    conn = st.connection("gsheets", type=GSheetsConnection)
     
-    with st.container(border=True):
-        st.markdown("**Superset SEO 销售额**")
-        st.metric(label="SEO Omzet (Superset)", value=f"€ {superset_seo_sales:,.2f}")
-        st.caption(f"Aandeel van totaal: **{superset_share}%**")
-
-    with st.container(border=True):
-        st.markdown("**GA4 SEO 销售额**")
-        st.metric(label="SEO Omzet (GA4)", value=f"€ {ga4_seo_sales:,.2f}")
-
-    with st.container(border=True):
-        st.markdown("**GA4 网站总销售额**")
-        st.metric(label="Totale Omzet Website", value=f"€ {ga4_total_sales:,.2f}")
-
-    with st.container(border=True):
-        st.markdown("**AI Assistant 销售额**")
-        st.metric(label="AI Assistant Omzet", value=f"€ {ai_sales:,.2f}")
-
-# KOLOM 2: TRAFFIC & BEZOEKERS (Verkeer)
-with col2:
-    st.subheader("📈 Traffic & Bezoekers")
-    st.markdown("---")
+    # We lezen de exacte rij-range van Callie NL uit (Rij 88 t/m 106)
+    # Geen header meegeven omdat de metrics verticaal staan
+    raw_df = conn.read(
+        spreadsheet=SHEET_URL,
+        skiprows=87,
+        nrows=19,
+        header=None
+    )
     
-    with st.container(border=True):
-        st.markdown("**网站总流量**")
-        st.metric(label="Totaal Websiteverkeer", value=f"{total_traffic:,}")
-
-    with st.container(border=True):
-        st.markdown("**SEO 流量 & Verdeling**")
-        st.metric(label="Totaal SEO Verkeer", value=f"{seo_traffic:,}")
-        st.write(f"• 站内流量 (Intern): **{seo_internal_traffic:,}**")
-        st.write(f"• Blog 流量: **{seo_blog_traffic:,}**")
-
-    with st.container(border=True):
-        st.markdown("**AI Assistant 流量**")
-        st.metric(label="AI Verkeer", value=f"{ai_traffic:,}")
-
-    with st.container(border=True):
-        st.markdown("**跳出率 (Bounce Rate)**")
-        st.metric(label="Bounce Rate", value=f"{bounce_rate}%")
-
-# KOLOM 3: SEO STATUS & BACKLINKS (Autoriteit)
-with col3:
-    st.subheader("🔍 SEO & Backlink Status")
-    st.markdown("---")
+    # Kolom 0 bevat de KPI-namen (Superset SEO销售额, etc.)
+    # Kolom 1 en verder bevatten de datums en de cijfers
+    metrics_names = raw_df.iloc[:, 0].tolist()
     
-    with st.container(border=True):
-        st.markdown("**收录情况 (Indexering)**")
-        st.metric(label="Totale Pagina's Geïndexeerd", value=f"{index_total}")
-        st.caption(f"Waarvan Blogs (Blog 收录): **{index_blog}**")
+    # Filter lege namen eruit
+    data_matrix = raw_df.iloc[:, 1:]
+    
+    # Kantel de tabel om (Transponeren): Datums worden rijen, KPI's worden kolommen
+    df_transposed = data_matrix.T
+    
+    # Stel de kolomnamen in op basis van de Chinese KPI-titels uit kolom A
+    df_transposed.columns = metrics_names
+    
+    # Maak een nette datumkolom van de eerste datumpunt
+    # De eerste rij van onze selectie bevat de datums
+    df_transposed = df_transposed.rename(columns={df_transposed.columns[0]: "Datum_Raw"})
+    
+    # Zet de datumkolom om naar echt datumformaat (fouten negeren bij lege kolommen)
+    df_transposed['Datum'] = pd.to_datetime(df_transposed['Datum_Raw'], errors='coerce')
+    
+    # Verwijder rijen waar geen geldige datum in staat
+    df_transposed = df_transposed.dropna(subset=['Datum'])
+    
+    # Zet alle numerieke kolommen om van tekst naar getallen
+    numeric_cols = [c for c in df_transposed.columns if c not in ['Datum_Raw', 'Datum', '网站要事记']]
+    for col in numeric_cols:
+        # Verwijder eventuele valuta-tekens (€, %, komma's) en zet om naar float
+        df_transposed[col] = (
+            df_transposed[col]
+            .astype(str)
+            .str.replace('€', '', regex=False)
+            .str.replace('%', '', regex=False)
+            .str.replace(',', '', regex=False)
+            .str.strip()
+        )
+        df_transposed[col] = pd.to_numeric(df_transposed[col], errors='coerce').fillna(0)
+        
+    return df_transposed.sort_values('Datum')
 
-    with st.container(border=True):
-        st.markdown("**外链数据 (Backlinks)**")
-        st.metric(label="Totaal Aantal Backlinks", value=f"{backlinks:,}")
+try:
+    df = load_and_transform_data()
 
-    with st.container(border=True):
-        st.markdown("**外链域名广度 (Domein Breedte)**")
-        st.metric(label="Verwijzende Domeinen", value=f"{referring_domains:,}")
+    # -------------------- SIDEBAR FILTERS --------------------
+    st.sidebar.header("📅 Periode Selectie")
+    min_date = df['Datum'].min().date()
+    max_date = df['Datum'].max().date()
 
-st.markdown("---")
-st.info("💡 **Tip:** Aan de linkerkant (in het zijmenu) kun je de getallen direct aanpassen en opslaan.")
+    start_date, end_date = st.sidebar.date_input(
+        "Datumbereik:",
+        value=[min_date, max_date],
+        min_value=min_date,
+        max_value=max_date
+    )
+
+    # Filter op datumbereik
+    filtered_df = df[(df['Datum'].dt.date >= start_date) & (df['Datum'].dt.date <= end_date)]
+
+    # -------------------- KPI SAMENVATTING (LAATSTE DATUM) --------------------
+    latest = filtered_df.iloc[-1] if not filtered_df.empty else df.iloc[-1]
+    
+    st.subheader(f"📌 Status op {latest['Datum'].strftime('%d-%m-%Y')}")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("GA4 SEO Omzet (销售额)", f"€ {latest.get('GA4 SEO销售额', 0):,.2f}")
+        st.caption(f"Superset Omzet: € {latest.get('Superset SEO销售额', 0):,.2f}")
+    with col2:
+        st.metric("Totale Omzet Website", f"€ {latest.get('GA4 网站总销售额', 0):,.2f}")
+        st.caption(f"Superset Aandeel: {latest.get('Superset 总销售额占比情况', 0)}%")
+    with col3:
+        st.metric("SEO Verkeer (流量)", f"{int(latest.get('SEO流量', 0)):,}")
+        st.caption(f"Blog Verkeer: {int(latest.get('SEO Blog流量', 0)):,}")
+    with col4:
+        st.metric("AI Assistant Verkeer", f"{int(latest.get('AI Assistant 流量', 0)):,}")
+        st.caption(f"AI Omzet: € {latest.get('AI Assistant 销售额', 0):,.2f}")
+
+    st.markdown("---")
+
+    # -------------------- GRAFIEKEN OVER TIJD --------------------
+    st.subheader("📈 Trends & Verloop over Tijd")
+
+    tab1, tab2, tab3 = st.tabs(["💰 Omzet Trends", "📈 Verkeer & Traffic", "🔍 SEO Status"])
+
+    with tab1:
+        fig_sales = px.line(
+            filtered_df,
+            x="Datum",
+            y=["GA4 SEO销售额", "Superset SEO销售额", "GA4 网站总销售额", "AI Assistant 销售额"],
+            title="Omzetontwikkeling (€)",
+            markers=True
+        )
+        fig_sales.update_layout(hovermode="x unified")
+        st.plotly_chart(fig_sales, use_container_width=True)
+
+    with tab2:
+        fig_traffic = px.line(
+            filtered_df,
+            x="Datum",
+            y=["SEO流量", "SEO 站内流量", "SEO Blog流量", "网站总流量", "AI Assistant 流量"],
+            title="Verkeersontwikkeling (Aantal Bezoekers)",
+            markers=True
+        )
+        fig_traffic.update_layout(hovermode="x unified")
+        st.plotly_chart(fig_traffic, use_container_width=True)
+
+    with tab3:
+        col_a, col_b = st.columns(2)
+        with col_a:
+            fig_index = px.line(
+                filtered_df,
+                x="Datum",
+                y=["收录", "Blog 收录"],
+                title="Geïndexeerde Pagina's (收录)",
+                markers=True
+            )
+            st.plotly_chart(fig_index, use_container_width=True)
+            
+        with col_b:
+            fig_backlinks = px.line(
+                filtered_df,
+                x="Datum",
+                y=["外链", "外链域名广度"],
+                title="Backlinks & Domain Breadth (外链)",
+                markers=True
+            )
+            st.plotly_chart(fig_backlinks, use_container_width=True)
+
+    # -------------------- BELANGRIJKE GEBEURTENISSEN --------------------
+    if '网站要事记' in filtered_df.columns:
+        st.markdown("---")
+        st.subheader("📝 网站要事记 (Website Notities & Logboek)")
+        notes_df = filtered_df[filtered_df['网站要事记'].astype(str).str.len() > 1][['Datum', '网站要事记']]
+        if not notes_df.empty:
+            for idx, row in notes_df.iterrows():
+                st.info(f"**{row['Datum'].strftime('%d-%m-%Y')}**: {row['网站要事记']}")
+        else:
+            st.write("Geen notities gevonden in de geselecteerde periode.")
+
+except Exception as e:
+    st.error("Er is een fout opgetreden bij het inlezen van de Google Sheet.")
+    st.write(f"Technisch detail: {e}")
