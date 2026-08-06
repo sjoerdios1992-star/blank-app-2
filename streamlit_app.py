@@ -18,24 +18,20 @@ SHEET_URL = "https://docs.google.com/spreadsheets/d/1GLAGMkVx5DMXylG0bbdvkzuqTd8
 
 def clean_number(val):
     """
-    Converts European/Dutch and international number formats into clean floats.
+    Parses US style formatted numbers like '$8,783.07' or '8,783' into correct floats.
     """
     if pd.isna(val):
         return 0.0
     
-    s = str(val).replace('€', '').replace('$', '').replace('%', '').strip()
+    # Clean currency and percentage signs
+    s = str(val).replace('$', '').replace('€', '').replace('%', '').strip()
     
     if not s or s.lower() == 'nan':
         return 0.0
 
-    if '.' in s and ',' in s:
-        s = s.replace('.', '').replace(',', '.')
-    elif ',' in s and '.' not in s:
-        s = s.replace(',', '.')
-    elif '.' in s and ',' not in s:
-        parts = s.split('.')
-        if len(parts[-1]) == 3:
-            s = s.replace('.', '')
+    # US Format: Commas are thousands separators -> remove them entirely
+    # e.g., "8,783.07" -> "8783.07"
+    s = s.replace(',', '')
 
     try:
         return float(s)
@@ -159,17 +155,17 @@ try:
     
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("GA4 SEO Revenue (GA4 SEO销售额)", f"€ {latest.get('GA4 SEO销售额', 0):,.2f}")
-        st.caption(f"Superset SEO Revenue (Superset SEO销售额): € {latest.get('Superset SEO销售额', 0):,.2f}")
+        st.metric("GA4 SEO Revenue (GA4 SEO销售额)", f"$ {latest.get('GA4 SEO销售额', 0):,.2f}")
+        st.caption(f"Superset SEO Revenue (Superset SEO销售额): $ {latest.get('Superset SEO销售额', 0):,.2f}")
     with col2:
-        st.metric("Total Website Revenue (GA4 网站总销售额)", f"€ {latest.get('GA4 网站总销售额', 0):,.2f}")
+        st.metric("Total Website Revenue (GA4 网站总销售额)", f"$ {latest.get('GA4 网站总销售额', 0):,.2f}")
         st.caption(f"Superset Share (Superset 总销售额占比情况): {latest.get('Superset 总销售额占比情况', 0)}%")
     with col3:
         st.metric("Total SEO Traffic (SEO流量)", f"{int(latest.get('SEO流量', 0)):,}")
         st.caption(f"Blog Traffic (SEO Blog流量): {int(latest.get('SEO Blog流量', 0)):,}")
     with col4:
         st.metric("AI Assistant Traffic (AI Assistant 流量)", f"{int(latest.get('AI Assistant 流量', 0)):,}")
-        st.caption(f"AI Revenue (AI Assistant 销售额): € {latest.get('AI Assistant 销售额', 0):,.2f}")
+        st.caption(f"AI Revenue (AI Assistant 销售额): $ {latest.get('AI Assistant 销售额', 0):,.2f}")
 
     st.markdown("---")
 
@@ -182,12 +178,12 @@ try:
     with tab1:
         col_a, col_b = st.columns(2)
         with col_a:
-            st.plotly_chart(create_yoy_chart(merged_df, "GA4 SEO销售额", "GA4 SEO Revenue (GA4 SEO销售额)", "Revenue (€)", "#1f77b4"), use_container_width=True)
-            st.plotly_chart(create_yoy_chart(merged_df, "GA4 网站总销售额", "Total Website Revenue (GA4 网站总销售额)", "Revenue (€)", "#2ca02c"), use_container_width=True)
+            st.plotly_chart(create_yoy_chart(merged_df, "GA4 SEO销售额", "GA4 SEO Revenue (GA4 SEO销售额)", "Revenue ($)", "#1f77b4"), use_container_width=True)
+            st.plotly_chart(create_yoy_chart(merged_df, "GA4 网站总销售额", "Total Website Revenue (GA4 网站总销售额)", "Revenue ($)", "#2ca02c"), use_container_width=True)
             st.plotly_chart(create_yoy_chart(merged_df, "Superset 总销售额占比情况", "Superset Revenue Share (Superset 总销售额占比情况)", "Percentage (%)", "#9467bd"), use_container_width=True)
         with col_b:
-            st.plotly_chart(create_yoy_chart(merged_df, "Superset SEO销售额", "Superset SEO Revenue (Superset SEO销售额)", "Revenue (€)", "#ff7f0e"), use_container_width=True)
-            st.plotly_chart(create_yoy_chart(merged_df, "AI Assistant 销售额", "AI Assistant Revenue (AI Assistant 销售额)", "Revenue (€)", "#d62728"), use_container_width=True)
+            st.plotly_chart(create_yoy_chart(merged_df, "Superset SEO销售额", "Superset SEO Revenue (Superset SEO销售额)", "Revenue ($)", "#ff7f0e"), use_container_width=True)
+            st.plotly_chart(create_yoy_chart(merged_df, "AI Assistant 销售额", "AI Assistant Revenue (AI Assistant 销售额)", "Revenue ($)", "#d62728"), use_container_width=True)
 
     # TAB 2: TRAFFIC METRICS
     with tab2:
