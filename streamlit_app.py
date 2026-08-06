@@ -30,7 +30,6 @@ def clean_number(val):
         return 0.0
 
     # US Format: Commas are thousands separators -> remove them entirely
-    # e.g., "8,783.07" -> "8783.07"
     s = s.replace(',', '')
 
     try:
@@ -71,28 +70,28 @@ def load_and_transform_data():
 
 def create_yoy_chart(df_merged, col, title, y_label, color_current="#1f77b4", color_ly="#aec7e8"):
     """
-    Creates an individual YoY chart for a single metric.
+    Creates an individual YoY chart for a single metric with optimized hover display.
     """
     fig = go.Figure()
     
-    # Current Year
+    # Current Year (今年)
     if col in df_merged.columns:
         fig.add_trace(go.Scatter(
             x=df_merged['Datum'],
             y=df_merged[col],
             mode='lines+markers',
-            name='Current Year',
+            name='今年',
             line=dict(color=color_current, width=3)
         ))
     
-    # Last Year (364 days offset)
+    # Last Year (去年 - 364 days offset)
     col_ly = f"{col}_LY"
     if col_ly in df_merged.columns:
         fig.add_trace(go.Scatter(
             x=df_merged['Datum'],
             y=df_merged[col_ly],
             mode='lines+markers',
-            name='Last Year (364d ago)',
+            name='去年',
             line=dict(color=color_ly, width=2, dash='dash')
         ))
 
@@ -101,8 +100,19 @@ def create_yoy_chart(df_merged, col, title, y_label, color_current="#1f77b4", co
         xaxis_title="Date",
         yaxis_title=y_label,
         hovermode="x unified",
-        margin=dict(l=20, r=20, t=40, b=20),
-        height=380
+        hoverlabel=dict(
+            bgcolor="white",
+            font_size=13
+        ),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        ),
+        margin=dict(l=20, r=20, t=50, b=20),
+        height=400
     )
     return fig
 
@@ -110,7 +120,7 @@ try:
     df, numeric_cols = load_and_transform_data()
 
     # -------------------- DEFAULT DATE RANGE SETTINGS --------------------
-    # Today - 2 days (end date) & Today - 32 days (start date = 30-day window prior)
+    # Today - 2 days (end date) & Today - 32 days (start date)
     today = pd.Timestamp.now().normalize()
     min_date = df['Datum'].min().date()
     max_date = df['Datum'].max().date()
