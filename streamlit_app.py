@@ -114,7 +114,7 @@ try:
     df, numeric_cols = load_and_transform_data()
 
     # -------------------- DEFAULT DATE RANGE SETTINGS --------------------
-    # Today - 2 days (end date) & Today - 9 days (start date = 1 week prior)
+    # Today - 2 days (end date) & Today - 32 days (start date = 30-day window prior)
     today = pd.Timestamp.now().normalize()
     min_date = df['Datum'].min().date()
     max_date = df['Datum'].max().date()
@@ -123,7 +123,7 @@ try:
     if default_end < min_date:
         default_end = max_date
         
-    default_start = max(default_end - pd.Timedelta(days=7), min_date)
+    default_start = max(default_end - pd.Timedelta(days=30), min_date)
 
     st.sidebar.header("📅 Date Range Selector")
     start_date, end_date = st.sidebar.date_input(
