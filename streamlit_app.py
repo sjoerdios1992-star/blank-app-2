@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
 import plotly.graph_objects as go
 from streamlit_gsheets import GSheetsConnection
 
@@ -11,16 +10,15 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("📊 Callie NL — Performance Dashboard & YoY Trends")
-st.caption("Data rechtstreeks uit Google Sheets met Year-over-Year (364 dagen) dagelijkse vergelijking.")
+st.title("📊 Callie NL — Performance Dashboard (Individuele YoY Trends)")
+st.caption("Alle metrieken individueel vergeleken met exact dezelfde dag vorig jaar (364 dagen geleden).")
 
 # -------------------- DATA OPHALEN EN OMZETTEN --------------------
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1GLAGMkVx5DMXylG0bbdvkzuqTd8IVfDANhcRrAX6LFU/edit?usp=sharing"
 
 def clean_number(val):
     """
-    Converteert Nederlandse/Europese getalnotaties (met . voor duizendtallen en , voor decimalen)
-    naar een float die Python kan begrijpen.
+    Converteert Nederlandse/Europese getalnotaties naar een float die Python kan begrijpen.
     """
     if pd.isna(val):
         return 0.0
@@ -59,7 +57,7 @@ def load_and_transform_data():
     metrics_names = raw_df.iloc[:, 0].tolist()
     data_matrix = raw_df.iloc[:, 1:]
     
-    # Kantel de tabel om: Datums worden rijen, KPI's worden kolommen
+    # Transponeren (转置 - zhuǎnzhì): Datums worden rijen, KPI's worden kolommen
     df_transposed = data_matrix.T
     df_transposed.columns = metrics_names
     
@@ -73,19 +71,64 @@ def load_and_transform_data():
     for col in numeric_cols:
         df_transposed[col] = df_transposed[col].apply(clean_number)
         
-    return df_transposed.sort_values('Datum')
+    return df_transposed.sort_values('Datum'), numeric_cols
+
+def create_yoy_chart(df_merged, col, title, y_label, color_current="#1f77b4", color_ly="#aec7e8"):
+    """
+    Maakt een individuele YoY grafiek voor één specifieke metriek.
+    """
+    fig = go.Figure()
+    
+    # Dit Jaar
+    if col in df_merged.columns:
+        fig.add_trace(go.Scatter(
+            x=df_merged['Datum'],
+            y=df_merged[col],
+            mode='lines+markers',
+            name='Dit Jaar',
+            line=dict(color=color_current, width=3)
+        ))
+    
+    # Vorig Jaar (364 dagen geleden)
+    col_ly = f"{col}_LY"
+    if col_ly in df_merged.columns:
+        fig.add_trace(go.Scatter(
+            x=df_merged['Datum'],
+            y=df_merged[col_ly],
+            mode='lines+markers',
+            name='Vorig Jaar (364d geleden)',
+            line=dict(color=color_ly, width=2, dash='dash')
+        ))
+
+    fig.update_layout(
+        title=title,
+        xaxis_title="Datum",
+        yaxis_title=y_label,
+        hovermode="x unified",
+        margin=dict(l=20, r=20, t=40, b=20),
+        height=380
+    )
+    return fig
 
 try:
-    df = load_and_transform_data()
+    df, numeric_cols = load_and_transform_data()
 
-    # -------------------- SIDEBAR FILTERS --------------------
-    st.sidebar.header("📅 Periode Selectie")
+    # -------------------- STANDAARD DATUMINSTELLING --------------------
+    # Vandaag - 2 dagen (einddatum) & Vandaag - 9 dagen (startdatum = 1 week voor einddatum)
+    today = pd.Timestamp.now().normalize()
     min_date = df['Datum'].min().date()
     max_date = df['Datum'].max().date()
 
+    default_end = min(today.date() - pd.Timedelta(days=2), max_date)
+    if default_end < min_date:
+        default_end = max_date
+        
+    default_start = max(default_end - pd.Timedelta(days=7), min_date)
+
+    st.sidebar.header("📅 Periode Selectie")
     start_date, end_date = st.sidebar.date_input(
-        "Selecteer huidige periode:",
-        value=[min_date, max_date],
+        "Selecteer datum bereik:",
+        value=[default_start, default_end],
         min_value=min_date,
         max_value=max_date
     )
@@ -93,23 +136,23 @@ try:
     # Filter huidige periode
     current_df = df[(df['Datum'].dt.date >= start_date) & (df['Datum'].dt.date <= end_date)].copy()
 
-    # -------------------- YOY MATCHING (364 DAGEN VERSCHUIVING) --------------------
-    # 52 weken * 7 dagen = 364 dagen (zorgt dat weekdagen exact gelijk lopen, bijv. Maandag vs Maandag)
+    # -------------------- YOY MATCHING VOOR ALLE METRIEKEN --------------------
+    # 52 weken * 7 dagen = 364 dagen (exact dezelfde weekdag vorig jaar)
     YOY_OFFSET = pd.Timedelta(days=364)
-    
     current_df['Datum_Vorig_Jaar'] = current_df['Datum'] - YOY_OFFSET
     
-    # Koppel de data van vorig jaar aan de huidige datums
+    # Koppel Vorig Jaar data voor ALLE numerieke kolommen
+    cols_to_merge = [c for c in numeric_cols if c in df.columns]
     merged_df = pd.merge(
         current_df,
-        df[['Datum', 'GA4 SEO销售额', 'GA4 网站总销售额', 'SEO流量', '网站总流量']],
+        df[['Datum'] + cols_to_merge],
         left_on='Datum_Vorig_Jaar',
         right_on='Datum',
         how='left',
         suffixes=('', '_LY')
     )
 
-    # -------------------- KPI SAMENVATTING (MEEST RECENTE DATUM) --------------------
+    # -------------------- KPI SAMENVATTING (LAATSTE GESELECTEERDE DAG) --------------------
     latest = current_df.iloc[-1] if not current_df.empty else df.iloc[-1]
     
     st.subheader(f"📌 Status op {latest['Datum'].strftime('%d-%m-%Y')}")
@@ -130,92 +173,43 @@ try:
 
     st.markdown("---")
 
-    # -------------------- GRAFIEKEN OVER TIJD (YOY VERGELIJKING) --------------------
-    st.subheader("📈 YoY Vergelijking per Dag (Dit Jaar vs Vorig Jaar)")
+    # -------------------- INDIVIDUELE GRAFIEKEN PER TAB --------------------
+    st.subheader("📈 Individuele YoY Grafieken (Dit Jaar vs Vorig Jaar)")
 
-    tab1, tab2, tab3 = st.tabs(["💰 Omzet YoY", "📈 Verkeer YoY", "🔍 SEO Status"])
+    tab1, tab2, tab3 = st.tabs(["💰 Omzet Metrics", "📈 Verkeer Metrics", "🔍 SEO & Backlink Status"])
 
+    # TAB 1: OMZET
     with tab1:
-        # Omzet Vergelijking Grafiek
-        fig_sales_yoy = go.Figure()
-        
-        # Dit Jaar
-        fig_sales_yoy.add_trace(go.Scatter(
-            x=merged_df['Datum'],
-            y=merged_df['GA4 SEO销售额'],
-            mode='lines+markers',
-            name='SEO Omzet Dit Jaar',
-            line=dict(color='#1f77b4', width=3)
-        ))
-        
-        # Vorig Jaar (Gekoppeld op dezelfde dag)
-        fig_sales_yoy.add_trace(go.Scatter(
-            x=merged_df['Datum'],
-            y=merged_df['GA4 SEO销售额_LY'],
-            mode='lines+markers',
-            name='SEO Omzet Vorig Jaar (364d geleden)',
-            line=dict(color='#aec7e8', width=2, dash='dash')
-        ))
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.plotly_chart(create_yoy_chart(merged_df, "GA4 SEO销售额", "GA4 SEO Omzet (€)", "Omzet (€)", "#1f77b4"), use_container_width=True)
+            st.plotly_chart(create_yoy_chart(merged_df, "GA4 网站总销售额", "Totale Website Omzet (€)", "Omzet (€)", "#2ca02c"), use_container_width=True)
+            st.plotly_chart(create_yoy_chart(merged_df, "Superset 总销售额占比情况", "Superset Omzet Aandeel (%)", "Percentage (%)", "#9467bd"), use_container_width=True)
+        with col_b:
+            st.plotly_chart(create_yoy_chart(merged_df, "Superset SEO销售额", "Superset SEO Omzet (€)", "Omzet (€)", "#ff7f0e"), use_container_width=True)
+            st.plotly_chart(create_yoy_chart(merged_df, "AI Assistant 销售额", "AI Assistant Omzet (€)", "Omzet (€)", "#d62728"), use_container_width=True)
 
-        fig_sales_yoy.update_layout(
-            title="GA4 SEO Omzet: Dit Jaar vs Vorig Jaar (Per Dag)",
-            xaxis_title="Datum (Huidige Periode)",
-            yaxis_title="Omzet (€)",
-            hovermode="x unified"
-        )
-        st.plotly_chart(fig_sales_yoy, use_container_width=True)
-
+    # TAB 2: VERKEER
     with tab2:
-        # Verkeersvergelijking Grafiek
-        fig_traffic_yoy = go.Figure()
-        
-        # Dit Jaar
-        fig_traffic_yoy.add_trace(go.Scatter(
-            x=merged_df['Datum'],
-            y=merged_df['SEO流量'],
-            mode='lines+markers',
-            name='SEO Verkeer Dit Jaar',
-            line=dict(color='#2ca02c', width=3)
-        ))
-        
-        # Vorig Jaar
-        fig_traffic_yoy.add_trace(go.Scatter(
-            x=merged_df['Datum'],
-            y=merged_df['SEO流量_LY'],
-            mode='lines+markers',
-            name='SEO Verkeer Vorig Jaar (364d geleden)',
-            line=dict(color='#98df8a', width=2, dash='dash')
-        ))
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.plotly_chart(create_yoy_chart(merged_df, "SEO流量", "Totaal SEO Verkeer", "Bezoekers", "#1f77b4"), use_container_width=True)
+            st.plotly_chart(create_yoy_chart(merged_df, "SEO Blog流量", "SEO Blog Verkeer", "Bezoekers", "#2ca02c"), use_container_width=True)
+            st.plotly_chart(create_yoy_chart(merged_df, "AI Assistant 流量", "AI Assistant Verkeer", "Bezoekers", "#9467bd"), use_container_width=True)
+        with col_b:
+            st.plotly_chart(create_yoy_chart(merged_df, "SEO 站内流量", "SEO Intern Verkeer", "Bezoekers", "#ff7f0e"), use_container_width=True)
+            st.plotly_chart(create_yoy_chart(merged_df, "网站总流量", "Totaal Website Verkeer", "Bezoekers", "#d62728"), use_container_width=True)
+            st.plotly_chart(create_yoy_chart(merged_df, "跳出率", "Bounce Rate (%)", "Percentage (%)", "#8c564b"), use_container_width=True)
 
-        fig_traffic_yoy.update_layout(
-            title="SEO Verkeer: Dit Jaar vs Vorig Jaar (Per Dag)",
-            xaxis_title="Datum (Huidige Periode)",
-            yaxis_title="Aantal Bezoekers",
-            hovermode="x unified"
-        )
-        st.plotly_chart(fig_traffic_yoy, use_container_width=True)
-
+    # TAB 3: SEO STATUS & BACKLINKS
     with tab3:
         col_a, col_b = st.columns(2)
         with col_a:
-            fig_index = px.line(
-                current_df,
-                x="Datum",
-                y=["收录", "Blog 收录"],
-                title="Geïndexeerde Pagina's (收录)",
-                markers=True
-            )
-            st.plotly_chart(fig_index, use_container_width=True)
-            
+            st.plotly_chart(create_yoy_chart(merged_df, "收录", "Geïndexeerde Pagina's (收录)", "Aantal Pagina's", "#1f77b4"), use_container_width=True)
+            st.plotly_chart(create_yoy_chart(merged_df, "外链", "Totaal Backlinks (外链)", "Aantal Backlinks", "#2ca02c"), use_container_width=True)
         with col_b:
-            fig_backlinks = px.line(
-                current_df,
-                x="Datum",
-                y=["外链", "外链域名广度"],
-                title="Backlinks & Domain Breadth (外链)",
-                markers=True
-            )
-            st.plotly_chart(fig_backlinks, use_container_width=True)
+            st.plotly_chart(create_yoy_chart(merged_df, "Blog 收录", "Geïndexeerde Blogs (Blog 收录)", "Aantal Blogs", "#ff7f0e"), use_container_width=True)
+            st.plotly_chart(create_yoy_chart(merged_df, "外链域名广度", "Verwijzende Domeinen (外链域名广度)", "Aantal Domeinen", "#d62728"), use_container_width=True)
 
 except Exception as e:
     st.error("Er is een fout opgetreden bij het inlezen van de Google Sheet.")
