@@ -70,10 +70,18 @@ def load_and_transform_data():
 
 def create_yoy_chart(df_merged, col, title, y_label, color_current="#1f77b4", color_ly="#aec7e8"):
     """
-    Creates an individual YoY chart for a single metric with optimized hover display.
+    Creates an individual YoY chart for a single metric with custom hover formatting ($ / % / integers).
     """
     fig = go.Figure()
-    
+
+    # Bepaal de hover-opmaak op basis van het type metriek
+    if "($)" in y_label or "Revenue" in title:
+        hover_template = "%{y:$,.2f}"
+    elif "(%)" in y_label or "Percentage" in y_label:
+        hover_template = "%{y:.2f}%"
+    else:
+        hover_template = "%{y:,.0f}"
+
     # Current Year (今年)
     if col in df_merged.columns:
         fig.add_trace(go.Scatter(
@@ -81,7 +89,8 @@ def create_yoy_chart(df_merged, col, title, y_label, color_current="#1f77b4", co
             y=df_merged[col],
             mode='lines+markers',
             name='今年',
-            line=dict(color=color_current, width=3)
+            line=dict(color=color_current, width=3),
+            hovertemplate=hover_template
         ))
     
     # Last Year (去年 - 364 days offset)
@@ -92,7 +101,8 @@ def create_yoy_chart(df_merged, col, title, y_label, color_current="#1f77b4", co
             y=df_merged[col_ly],
             mode='lines+markers',
             name='去年',
-            line=dict(color=color_ly, width=2, dash='dash')
+            line=dict(color=color_ly, width=2, dash='dash'),
+            hovertemplate=hover_template
         ))
 
     fig.update_layout(
@@ -114,6 +124,9 @@ def create_yoy_chart(df_merged, col, title, y_label, color_current="#1f77b4", co
         margin=dict(l=20, r=20, t=50, b=20),
         height=400
     )
+    # Formatteer de datum in het hovervenster als DD-MM-YYYY
+    fig.update_xaxes(hoverformat="%d-%m-%Y")
+    
     return fig
 
 try:
