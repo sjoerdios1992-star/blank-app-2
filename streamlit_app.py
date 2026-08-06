@@ -70,7 +70,7 @@ def load_and_transform_data():
 
 def create_yoy_chart(df_merged, col, title, y_label, color_current="#1f77b4", color_ly="#aec7e8"):
     """
-    Creates an individual YoY chart for a single metric with custom hover formatting ($ / % / integers).
+    Creates an individual YoY chart with y-axis baseline set to 0.
     """
     fig = go.Figure()
 
@@ -109,6 +109,7 @@ def create_yoy_chart(df_merged, col, title, y_label, color_current="#1f77b4", co
         title=title,
         xaxis_title="Date",
         yaxis_title=y_label,
+        yaxis=dict(rangemode="tozero"),  # Dwingt de Y-as om bij 0 te beginnen!
         hovermode="x unified",
         hoverlabel=dict(
             bgcolor="white",
