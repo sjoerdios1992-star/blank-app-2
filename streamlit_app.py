@@ -74,7 +74,7 @@ def create_yoy_chart(df_merged, col, title, y_label, color_current="#1f77b4", co
     """
     fig = go.Figure()
 
-    # Bepaal de hover-opmaak op basis van het type metriek
+    # Determine hover formatting based on metric type
     if "($)" in y_label or "Revenue" in title:
         hover_template = "%{y:$,.2f}"
     elif "(%)" in y_label or "Percentage" in y_label:
@@ -109,7 +109,7 @@ def create_yoy_chart(df_merged, col, title, y_label, color_current="#1f77b4", co
         title=title,
         xaxis_title="Date",
         yaxis_title=y_label,
-        yaxis=dict(rangemode="tozero"),  # Dwingt de Y-as om bij 0 te beginnen!
+        yaxis=dict(rangemode="tozero"),
         hovermode="x unified",
         hoverlabel=dict(
             bgcolor="white",
@@ -125,7 +125,6 @@ def create_yoy_chart(df_merged, col, title, y_label, color_current="#1f77b4", co
         margin=dict(l=20, r=20, t=50, b=20),
         height=400
     )
-    # Formatteer de datum in het hovervenster als DD-MM-YYYY
     fig.update_xaxes(hoverformat="%d-%m-%Y")
     
     return fig
@@ -172,24 +171,73 @@ try:
         suffixes=('', '_LY')
     )
 
-    # -------------------- KPI SUMMARY (LATEST SELECTED DATE) --------------------
-    latest = current_df.iloc[-1] if not current_df.empty else df.iloc[-1]
-    
-    st.subheader(f"📌 Status Overview ({latest['Datum'].strftime('%d-%m-%Y')})")
-    
+    # -------------------- KPI SUMMARY (TOTALS OVER SELECTED PERIOD) --------------------
+    start_str = start_date.strftime('%d-%m-%Y')
+    end_str = end_date.strftime('%d-%m-%Y')
+    st.subheader(f"📌 Total Period Summary ({start_str} to {end_str}) — 今年 vs 去年")
+
+    # Sum calculations for current period vs last year period
+    curr_ga4_seo = merged_df['GA4 SEO销售额'].sum() if 'GA4 SEO销售额' in merged_df.columns else 0
+    ly_ga4_seo = merged_df['GA4 SEO销售额_LY'].sum() if 'GA4 SEO销售额_LY' in merged_df.columns else 0
+
+    curr_superset_seo = merged_df['Superset SEO销售额'].sum() if 'Superset SEO销售额' in merged_df.columns else 0
+    ly_superset_seo = merged_df['Superset SEO销售额_LY'].sum() if 'Superset SEO销售额_LY' in merged_df.columns else 0
+
+    curr_total_rev = merged_df['GA4 网站总销售额'].sum() if 'GA4 网站总销售额' in merged_df.columns else 0
+    ly_total_rev = merged_df['GA4 网站总销售额_LY'].sum() if 'GA4 网站总销售额_LY' in merged_df.columns else 0
+
+    curr_superset_share = (curr_superset_seo / curr_total_rev * 100) if curr_total_rev > 0 else 0
+    ly_superset_share = (ly_superset_seo / ly_total_rev * 100) if ly_total_rev > 0 else 0
+
+    curr_seo_traffic = merged_df['SEO流量'].sum() if 'SEO流量' in merged_df.columns else 0
+    ly_seo_traffic = merged_df['SEO流量_LY'].sum() if 'SEO流量_LY' in merged_df.columns else 0
+
+    curr_blog_traffic = merged_df['SEO Blog流量'].sum() if 'SEO Blog流量' in merged_df.columns else 0
+    ly_blog_traffic = merged_df['SEO Blog流量_LY'].sum() if 'SEO Blog流量_LY' in merged_df.columns else 0
+
+    curr_ai_traffic = merged_df['AI Assistant 流量'].sum() if 'AI Assistant 流量' in merged_df.columns else 0
+    ly_ai_traffic = merged_df['AI Assistant 流量_LY'].sum() if 'AI Assistant 流量_LY' in merged_df.columns else 0
+
+    curr_ai_rev = merged_df['AI Assistant 销售额'].sum() if 'AI Assistant 销售额' in merged_df.columns else 0
+    ly_ai_rev = merged_df['AI Assistant 销售额_LY'].sum() if 'AI Assistant 销售额_LY' in merged_df.columns else 0
+
+    # Display 4 KPI Columns with Period Totals
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("GA4 SEO Revenue (GA4 SEO销售额)", f"$ {latest.get('GA4 SEO销售额', 0):,.2f}")
-        st.caption(f"Superset SEO Revenue (Superset SEO销售额): $ {latest.get('Superset SEO销售额', 0):,.2f}")
+        diff_seo_rev = curr_ga4_seo - ly_ga4_seo
+        st.metric(
+            label="GA4 SEO Revenue (GA4 SEO销售额)",
+            value=f"$ {curr_ga4_seo:,.2f}",
+            delta=f"{diff_seo_rev:+,.2f} vs 去年"
+        )
+        st.caption(f"去年: $ {ly_ga4_seo:,.2f} | Superset: $ {curr_superset_seo:,.2f} (去年: $ {ly_superset_seo:,.2f})")
+
     with col2:
-        st.metric("Total Website Revenue (GA4 网站总销售额)", f"$ {latest.get('GA4 网站总销售额', 0):,.2f}")
-        st.caption(f"Superset Share (Superset 总销售额占比情况): {latest.get('Superset 总销售额占比情况', 0)}%")
+        diff_total_rev = curr_total_rev - ly_total_rev
+        st.metric(
+            label="Total Website Revenue (GA4 网站总销售额)",
+            value=f"$ {curr_total_rev:,.2f}",
+            delta=f"{diff_total_rev:+,.2f} vs 去年"
+        )
+        st.caption(f"去年: $ {ly_total_rev:,.2f} | Superset Share: {curr_superset_share:.1f}% (去年: {ly_superset_share:.1f}%)")
+
     with col3:
-        st.metric("Total SEO Traffic (SEO流量)", f"{int(latest.get('SEO流量', 0)):,}")
-        st.caption(f"Blog Traffic (SEO Blog流量): {int(latest.get('SEO Blog流量', 0)):,}")
+        diff_seo_tr = curr_seo_traffic - ly_seo_traffic
+        st.metric(
+            label="Total SEO Traffic (SEO流量)",
+            value=f"{int(curr_seo_traffic):,}",
+            delta=f"{int(diff_seo_tr):+,} vs 去年"
+        )
+        st.caption(f"去年: {int(ly_seo_traffic):,} | Blog Traffic: {int(curr_blog_traffic):,} (去年: {int(ly_blog_traffic):,})")
+
     with col4:
-        st.metric("AI Assistant Traffic (AI Assistant 流量)", f"{int(latest.get('AI Assistant 流量', 0)):,}")
-        st.caption(f"AI Revenue (AI Assistant 销售额): $ {latest.get('AI Assistant 销售额', 0):,.2f}")
+        diff_ai_tr = curr_ai_traffic - ly_ai_traffic
+        st.metric(
+            label="AI Assistant Traffic (AI Assistant 流量)",
+            value=f"{int(curr_ai_traffic):,}",
+            delta=f"{int(diff_ai_tr):+,} vs 去年"
+        )
+        st.caption(f"去年: {int(ly_ai_traffic):,} | AI Revenue: $ {curr_ai_rev:,.2f} (去年: $ {ly_ai_rev:,.2f})")
 
     st.markdown("---")
 
