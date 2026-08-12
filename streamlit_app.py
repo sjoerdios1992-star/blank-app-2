@@ -42,18 +42,18 @@ def check_password():
 
     return True
 
-# Stop de uitvoering van het script als de gebruiker niet is ingelogd
+# Stop execution if not authenticated
 if not check_password():
     st.stop()
 
-# -------------------- LOGOUT KNOP IN SIDEBAR --------------------
+# -------------------- LOGOUT BUTTON IN SIDEBAR --------------------
 if st.sidebar.button("🔒 Log out"):
     st.session_state["authenticated"] = False
     st.rerun()
 
-# -------------------- DASHBOARD TITEL --------------------
+# -------------------- DASHBOARD TITLE --------------------
 st.title("📊 Callie NL — Performance Dashboard (Individual YoY Trends)")
-st.caption("All metrics individually compared against the exact same day last year (364 days offset).")
+st.caption("All metrics individually compared against last year with flexible period aggregation (Day / Week / Month / Quarter / Year).")
 
 # -------------------- DATA FETCHING & TRANSFORMATION --------------------
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1GLAGMkVx5DMXylG0bbdvkzuqTd8IVfDANhcRrAX6LFU/edit?usp=sharing"
@@ -65,13 +65,11 @@ def clean_number(val):
     if pd.isna(val):
         return 0.0
     
-    # Clean currency and percentage signs
     s = str(val).replace('$', '').replace('€', '').replace('%', '').strip()
     
     if not s or s.lower() == 'nan':
         return 0.0
 
-    # US Format: Commas are thousands separators -> remove them entirely
     s = s.replace(',', '')
 
     try:
@@ -83,7 +81,6 @@ def clean_number(val):
 def load_and_transform_data():
     conn = st.connection("gsheets", type=GSheetsConnection)
     
-    # Read row range for Callie NL (Row 88 to 106)
     raw_df = conn.read(
         spreadsheet=SHEET_URL,
         skiprows=87,
@@ -94,16 +91,13 @@ def load_and_transform_data():
     metrics_names = raw_df.iloc[:, 0].tolist()
     data_matrix = raw_df.iloc[:, 1:]
     
-    # Transpose matrix: Dates become rows, KPIs become columns
     df_transposed = data_matrix.T
     df_transposed.columns = metrics_names
     
-    # Process date column
     df_transposed = df_transposed.rename(columns={df_transposed.columns[0]: "Datum_Raw"})
     df_transposed['Datum'] = pd.to_datetime(df_transposed['Datum_Raw'], errors='coerce')
     df_transposed = df_transposed.dropna(subset=['Datum'])
     
-    # Clean numeric columns
     numeric_cols = [c for c in df_transposed.columns if c not in ['Datum_Raw', 'Datum', '网站要事记']]
     for col in numeric_cols:
         df_transposed[col] = df_transposed[col].apply(clean_number)
@@ -116,7 +110,6 @@ def create_yoy_chart(df_merged, col, title, y_label, color_current="#1f77b4", co
     """
     fig = go.Figure()
 
-    # Determine hover formatting based on metric type
     if "($)" in y_label or "Revenue" in title:
         hover_template = "%{y:$,.2f}"
     elif "(%)" in y_label or "Percentage" in y_label:
@@ -135,7 +128,7 @@ def create_yoy_chart(df_merged, col, title, y_label, color_current="#1f77b4", co
             hovertemplate=hover_template
         ))
     
-    # Last Year (去年 - 364 days offset)
+    # Last Year (去年)
     col_ly = f"{col}_LY"
     if col_ly in df_merged.columns:
         fig.add_trace(go.Scatter(
@@ -174,7 +167,14 @@ def create_yoy_chart(df_merged, col, title, y_label, color_current="#1f77b4", co
 try:
     df, numeric_cols = load_and_transform_data()
 
-    # -------------------- DEFAULT DATE RANGE SETTINGS --------------------
+    # -------------------- SIDEBAR CONTROLS --------------------
+    st.sidebar.header("📅 Date & Granularity Selector")
+    
+    granularity = st.sidebar.selectbox(
+        "Frequency / Grouping (按时间聚合):",
+        ["Daily (日)", "Weekly (周)", "Monthly (月)", "Quarterly (季)", "Yearly (年)"]
+    )
+
     today = pd.Timestamp.now().normalize()
     min_date = df['Datum'].min().date()
     max_date = df['Datum'].max().date()
@@ -185,7 +185,6 @@ try:
         
     default_start = max(default_end - pd.Timedelta(days=30), min_date)
 
-    st.sidebar.header("📅 Date Range Selector")
     start_date, end_date = st.sidebar.date_input(
         "Select Date Range:",
         value=[default_start, default_end],
@@ -193,27 +192,52 @@ try:
         max_value=max_date
     )
 
-    # Filter current period
-    current_df = df[(df['Datum'].dt.date >= start_date) & (df['Datum'].dt.date <= end_date)].copy()
+    # -------------------- AGGREGATION LOGIC --------------------
+    freq_map = {
+        "Daily (日)": "D",
+        "Weekly (周)": "W-MON",
+        "Monthly (月)": "MS",
+        "Quarterly (季)": "QS",
+        "Yearly (年)": "YS"
+    }
+    freq_code = freq_map[granularity]
 
-    # -------------------- YOY MATCHING FOR ALL METRICS --------------------
-    YOY_OFFSET = pd.Timedelta(days=364)
-    current_df['Datum_Vorig_Jaar'] = current_df['Datum'] - YOY_OFFSET
-    
-    cols_to_merge = [c for c in numeric_cols if c in df.columns]
+    # Rule for aggregation: Sum flow variables, average stock/percentage variables
+    agg_rules = {}
+    for col in numeric_cols:
+        if "率" in col or "占比" in col or "Share" in col or "Rate" in col or "收录" in col or "外链" in col:
+            agg_rules[col] = 'mean'
+        else:
+            agg_rules[col] = 'sum'
+
+    if freq_code != "D":
+        df_resampled = df.set_index('Datum').groupby(pd.Grouper(freq=freq_code)).agg(agg_rules).reset_index()
+    else:
+        df_resampled = df.copy()
+
+    # Filter selected period
+    current_df = df_resampled[(df_resampled['Datum'].dt.date >= start_date) & (df_resampled['Datum'].dt.date <= end_date)].copy()
+
+    # -------------------- YOY MATCHING --------------------
+    if freq_code in ["D", "W-MON"]:
+        current_df['Datum_Vorig_Jaar'] = current_df['Datum'] - pd.Timedelta(days=364)
+    else:
+        current_df['Datum_Vorig_Jaar'] = current_df['Datum'] - pd.DateOffset(years=1)
+
+    cols_to_merge = [c for c in numeric_cols if c in df_resampled.columns]
     merged_df = pd.merge(
         current_df,
-        df[['Datum'] + cols_to_merge],
+        df_resampled[['Datum'] + cols_to_merge],
         left_on='Datum_Vorig_Jaar',
         right_on='Datum',
         how='left',
         suffixes=('', '_LY')
     )
 
-    # -------------------- KPI SUMMARY (TOTALS OVER SELECTED PERIOD) --------------------
+    # -------------------- KPI SUMMARY --------------------
     start_str = start_date.strftime('%d-%m-%Y')
     end_str = end_date.strftime('%d-%m-%Y')
-    st.subheader(f"📌 Total Period Summary ({start_str} to {end_str}) — 今年 vs 去年")
+    st.subheader(f"📌 Total Period Summary ({start_str} to {end_str}) — 今年 vs 去年 [{granularity}]")
 
     curr_ga4_seo = merged_df['GA4 SEO销售额'].sum() if 'GA4 SEO销售额' in merged_df.columns else 0
     ly_ga4_seo = merged_df['GA4 SEO销售额_LY'].sum() if 'GA4 SEO销售额_LY' in merged_df.columns else 0
@@ -279,7 +303,7 @@ try:
     st.markdown("---")
 
     # -------------------- INDIVIDUAL CHARTS BY TAB --------------------
-    st.subheader("📈 Individual YoY Performance Charts")
+    st.subheader(f"📈 Performance Trends [{granularity}]")
 
     tab1, tab2, tab3 = st.tabs(["💰 Revenue Metrics", "📈 Traffic Metrics", "🔍 SEO & Backlink Status"])
 
