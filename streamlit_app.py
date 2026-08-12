@@ -88,7 +88,8 @@ def load_and_transform_data():
         header=None
     )
     
-    metrics_names = raw_df.iloc[:, 0].tolist()
+    # Zorg dat alle kolomnamen uit kolom A altijd string (tekst) zijn
+    metrics_names = [str(m).strip() if pd.notna(m) else f"Metric_{i}" for i, m in enumerate(raw_df.iloc[:, 0].tolist())]
     data_matrix = raw_df.iloc[:, 1:]
     
     df_transposed = data_matrix.T
@@ -98,7 +99,7 @@ def load_and_transform_data():
     df_transposed['Datum'] = pd.to_datetime(df_transposed['Datum_Raw'], errors='coerce')
     df_transposed = df_transposed.dropna(subset=['Datum'])
     
-    numeric_cols = [c for c in df_transposed.columns if c not in ['Datum_Raw', 'Datum', '网站要事记']]
+    numeric_cols = [str(c) for c in df_transposed.columns if str(c) not in ['Datum_Raw', 'Datum', '网站要事记']]
     for col in numeric_cols:
         df_transposed[col] = df_transposed[col].apply(clean_number)
         
@@ -205,7 +206,8 @@ try:
     # Rule for aggregation: Sum flow variables, average stock/percentage variables
     agg_rules = {}
     for col in numeric_cols:
-        if "率" in col or "占比" in col or "Share" in col or "Rate" in col or "收录" in col or "外链" in col:
+        col_str = str(col)
+        if "率" in col_str or "占比" in col_str or "Share" in col_str or "Rate" in col_str or "收录" in col_str or "外链" in col_str:
             agg_rules[col] = 'mean'
         else:
             agg_rules[col] = 'sum'
