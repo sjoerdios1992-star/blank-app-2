@@ -10,6 +10,48 @@ st.set_page_config(
     layout="wide"
 )
 
+# -------------------- AUTHENTICATION FUNCTION --------------------
+def check_password():
+    """
+    Inlogsysteem op basis van st.session_state.
+    Controleert of gebruikersnaam 'seo' en wachtwoord 'callie' juist zijn.
+    """
+    if "authenticated" not in st.session_state:
+        st.session_state["authenticated"] = False
+
+    if not st.session_state["authenticated"]:
+        st.title("🔒 Login Required")
+        st.caption("Please enter your credentials to access the Callie NL Performance Dashboard.")
+
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            with st.form("login_form"):
+                username_input = st.text_input("Username")
+                password_input = st.text_input("Password", type="password")
+                submit_button = st.form_submit_button("Login")
+
+                if submit_button:
+                    if username_input == "seo" and password_input == "callie":
+                        st.session_state["authenticated"] = True
+                        st.success("Access granted!")
+                        st.rerun()
+                    else:
+                        st.error("❌ Incorrect username or password")
+
+        return False
+
+    return True
+
+# Stop de uitvoering van het script als de gebruiker niet is ingelogd
+if not check_password():
+    st.stop()
+
+# -------------------- LOGOUT KNOP IN SIDEBAR --------------------
+if st.sidebar.button("🔒 Log out"):
+    st.session_state["authenticated"] = False
+    st.rerun()
+
+# -------------------- DASHBOARD TITEL --------------------
 st.title("📊 Callie NL — Performance Dashboard (Individual YoY Trends)")
 st.caption("All metrics individually compared against the exact same day last year (364 days offset).")
 
@@ -133,7 +175,6 @@ try:
     df, numeric_cols = load_and_transform_data()
 
     # -------------------- DEFAULT DATE RANGE SETTINGS --------------------
-    # Today - 2 days (end date) & Today - 32 days (start date)
     today = pd.Timestamp.now().normalize()
     min_date = df['Datum'].min().date()
     max_date = df['Datum'].max().date()
@@ -156,11 +197,9 @@ try:
     current_df = df[(df['Datum'].dt.date >= start_date) & (df['Datum'].dt.date <= end_date)].copy()
 
     # -------------------- YOY MATCHING FOR ALL METRICS --------------------
-    # 52 weeks * 7 days = 364 days (aligns exact weekday last year)
     YOY_OFFSET = pd.Timedelta(days=364)
     current_df['Datum_Vorig_Jaar'] = current_df['Datum'] - YOY_OFFSET
     
-    # Merge Last Year data for ALL numeric columns
     cols_to_merge = [c for c in numeric_cols if c in df.columns]
     merged_df = pd.merge(
         current_df,
@@ -176,7 +215,6 @@ try:
     end_str = end_date.strftime('%d-%m-%Y')
     st.subheader(f"📌 Total Period Summary ({start_str} to {end_str}) — 今年 vs 去年")
 
-    # Sum calculations for current period vs last year period
     curr_ga4_seo = merged_df['GA4 SEO销售额'].sum() if 'GA4 SEO销售额' in merged_df.columns else 0
     ly_ga4_seo = merged_df['GA4 SEO销售额_LY'].sum() if 'GA4 SEO销售额_LY' in merged_df.columns else 0
 
@@ -201,7 +239,6 @@ try:
     curr_ai_rev = merged_df['AI Assistant 销售额'].sum() if 'AI Assistant 销售额' in merged_df.columns else 0
     ly_ai_rev = merged_df['AI Assistant 销售额_LY'].sum() if 'AI Assistant 销售额_LY' in merged_df.columns else 0
 
-    # Display 4 KPI Columns with Period Totals
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         diff_seo_rev = curr_ga4_seo - ly_ga4_seo
