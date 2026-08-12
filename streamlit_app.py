@@ -88,7 +88,6 @@ def load_and_transform_data():
         header=None
     )
     
-    # Zorg dat alle kolomnamen uit kolom A altijd string (tekst) zijn
     metrics_names = [str(m).strip() if pd.notna(m) else f"Metric_{i}" for i, m in enumerate(raw_df.iloc[:, 0].tolist())]
     data_matrix = raw_df.iloc[:, 1:]
     
@@ -105,9 +104,9 @@ def load_and_transform_data():
         
     return df_transposed.sort_values('Datum'), numeric_cols
 
-def create_yoy_chart(df_merged, col, title, y_label, color_current="#1f77b4", color_ly="#aec7e8"):
+def create_yoy_chart(df_merged, col, title, y_label, freq_code, color_current="#1f77b4", color_ly="#aec7e8"):
     """
-    Creates an individual YoY chart with y-axis baseline set to 0.
+    Creates an individual YoY chart with custom hover formatting and frequency-matched x-axis format.
     """
     fig = go.Figure()
 
@@ -143,7 +142,7 @@ def create_yoy_chart(df_merged, col, title, y_label, color_current="#1f77b4", co
 
     fig.update_layout(
         title=title,
-        xaxis_title="Date",
+        xaxis_title="Date / Period",
         yaxis_title=y_label,
         yaxis=dict(rangemode="tozero"),
         hovermode="x unified",
@@ -161,7 +160,16 @@ def create_yoy_chart(df_merged, col, title, y_label, color_current="#1f77b4", co
         margin=dict(l=20, r=20, t=50, b=20),
         height=400
     )
-    fig.update_xaxes(hoverformat="%d-%m-%Y")
+
+    # Stem de X-as datumweergave af op de gekozen frequentie
+    if freq_code == "MS":
+        fig.update_xaxes(dtick="M1", tickformat="%b %Y", hoverformat="%B %Y")
+    elif freq_code == "QS":
+        fig.update_xaxes(dtick="M3", tickformat="Q%q %Y", hoverformat="Q%q %Y")
+    elif freq_code == "YS":
+        fig.update_xaxes(dtick="M12", tickformat="%Y", hoverformat="%Y")
+    else:
+        fig.update_xaxes(hoverformat="%d-%m-%Y")
     
     return fig
 
@@ -217,8 +225,20 @@ try:
     else:
         df_resampled = df.copy()
 
-    # Filter selected period
-    current_df = df_resampled[(df_resampled['Datum'].dt.date >= start_date) & (df_resampled['Datum'].dt.date <= end_date)].copy()
+    # -------------------- SLIMME DATUMFILTERING --------------------
+    # Zorg dat de startdatum mee verschuift naar het begin van de gekozen periode (zodat de maand niet weggeknipt wordt)
+    filter_start = start_date
+    if freq_code == "MS":
+        filter_start = start_date.replace(day=1)
+    elif freq_code == "QS":
+        month = ((start_date.month - 1) // 3) * 3 + 1
+        filter_start = start_date.replace(month=month, day=1)
+    elif freq_code == "YS":
+        filter_start = start_date.replace(month=1, day=1)
+    elif freq_code == "W-MON":
+        filter_start = start_date - pd.Timedelta(days=start_date.weekday())
+
+    current_df = df_resampled[(df_resampled['Datum'].dt.date >= filter_start) & (df_resampled['Datum'].dt.date <= end_date)].copy()
 
     # -------------------- YOY MATCHING --------------------
     if freq_code in ["D", "W-MON"]:
@@ -313,34 +333,34 @@ try:
     with tab1:
         col_a, col_b = st.columns(2)
         with col_a:
-            st.plotly_chart(create_yoy_chart(merged_df, "GA4 SEO销售额", "GA4 SEO Revenue (GA4 SEO销售额)", "Revenue ($)", "#1f77b4"), use_container_width=True)
-            st.plotly_chart(create_yoy_chart(merged_df, "GA4 网站总销售额", "Total Website Revenue (GA4 网站总销售额)", "Revenue ($)", "#2ca02c"), use_container_width=True)
-            st.plotly_chart(create_yoy_chart(merged_df, "Superset 总销售额占比情况", "Superset Revenue Share (Superset 总销售额占比情况)", "Percentage (%)", "#9467bd"), use_container_width=True)
+            st.plotly_chart(create_yoy_chart(merged_df, "GA4 SEO销售额", "GA4 SEO Revenue (GA4 SEO销售额)", "Revenue ($)", freq_code, "#1f77b4"), use_container_width=True)
+            st.plotly_chart(create_yoy_chart(merged_df, "GA4 网站总销售额", "Total Website Revenue (GA4 网站总销售额)", "Revenue ($)", freq_code, "#2ca02c"), use_container_width=True)
+            st.plotly_chart(create_yoy_chart(merged_df, "Superset 总销售额占比情况", "Superset Revenue Share (Superset 总销售额占比情况)", "Percentage (%)", freq_code, "#9467bd"), use_container_width=True)
         with col_b:
-            st.plotly_chart(create_yoy_chart(merged_df, "Superset SEO销售额", "Superset SEO Revenue (Superset SEO销售额)", "Revenue ($)", "#ff7f0e"), use_container_width=True)
-            st.plotly_chart(create_yoy_chart(merged_df, "AI Assistant 销售额", "AI Assistant Revenue (AI Assistant 销售额)", "Revenue ($)", "#d62728"), use_container_width=True)
+            st.plotly_chart(create_yoy_chart(merged_df, "Superset SEO销售额", "Superset SEO Revenue (Superset SEO销售额)", "Revenue ($)", freq_code, "#ff7f0e"), use_container_width=True)
+            st.plotly_chart(create_yoy_chart(merged_df, "AI Assistant 销售额", "AI Assistant Revenue (AI Assistant 销售额)", "Revenue ($)", freq_code, "#d62728"), use_container_width=True)
 
     # TAB 2: TRAFFIC METRICS
     with tab2:
         col_a, col_b = st.columns(2)
         with col_a:
-            st.plotly_chart(create_yoy_chart(merged_df, "SEO流量", "Total SEO Traffic (SEO流量)", "Visitors", "#1f77b4"), use_container_width=True)
-            st.plotly_chart(create_yoy_chart(merged_df, "SEO Blog流量", "SEO Blog Traffic (SEO Blog流量)", "Visitors", "#2ca02c"), use_container_width=True)
-            st.plotly_chart(create_yoy_chart(merged_df, "AI Assistant 流量", "AI Assistant Traffic (AI Assistant 流量)", "Visitors", "#9467bd"), use_container_width=True)
+            st.plotly_chart(create_yoy_chart(merged_df, "SEO流量", "Total SEO Traffic (SEO流量)", "Visitors", freq_code, "#1f77b4"), use_container_width=True)
+            st.plotly_chart(create_yoy_chart(merged_df, "SEO Blog流量", "SEO Blog Traffic (SEO Blog流量)", "Visitors", freq_code, "#2ca02c"), use_container_width=True)
+            st.plotly_chart(create_yoy_chart(merged_df, "AI Assistant 流量", "AI Assistant Traffic (AI Assistant 流量)", "Visitors", freq_code, "#9467bd"), use_container_width=True)
         with col_b:
-            st.plotly_chart(create_yoy_chart(merged_df, "SEO 站内流量", "Internal SEO Traffic (SEO 站内流量)", "Visitors", "#ff7f0e"), use_container_width=True)
-            st.plotly_chart(create_yoy_chart(merged_df, "网站总流量", "Total Website Traffic (网站总流量)", "Visitors", "#d62728"), use_container_width=True)
-            st.plotly_chart(create_yoy_chart(merged_df, "跳出率", "Bounce Rate (跳出率)", "Percentage (%)", "#8c564b"), use_container_width=True)
+            st.plotly_chart(create_yoy_chart(merged_df, "SEO 站内流量", "Internal SEO Traffic (SEO 站内流量)", "Visitors", freq_code, "#ff7f0e"), use_container_width=True)
+            st.plotly_chart(create_yoy_chart(merged_df, "网站总流量", "Total Website Traffic (网站总流量)", "Visitors", freq_code, "#d62728"), use_container_width=True)
+            st.plotly_chart(create_yoy_chart(merged_df, "跳出率", "Bounce Rate (跳出率)", "Percentage (%)", freq_code, "#8c564b"), use_container_width=True)
 
     # TAB 3: SEO STATUS & BACKLINKS
     with tab3:
         col_a, col_b = st.columns(2)
         with col_a:
-            st.plotly_chart(create_yoy_chart(merged_df, "收录", "Indexed Pages (收录)", "Pages Count", "#1f77b4"), use_container_width=True)
-            st.plotly_chart(create_yoy_chart(merged_df, "外链", "Total Backlinks (外链)", "Backlinks Count", "#2ca02c"), use_container_width=True)
+            st.plotly_chart(create_yoy_chart(merged_df, "收录", "Indexed Pages (收录)", "Pages Count", freq_code, "#1f77b4"), use_container_width=True)
+            st.plotly_chart(create_yoy_chart(merged_df, "外链", "Total Backlinks (外链)", "Backlinks Count", freq_code, "#2ca02c"), use_container_width=True)
         with col_b:
-            st.plotly_chart(create_yoy_chart(merged_df, "Blog 收录", "Indexed Blog Pages (Blog 收录)", "Blogs Count", "#ff7f0e"), use_container_width=True)
-            st.plotly_chart(create_yoy_chart(merged_df, "外链域名广度", "Referring Domains / Breadth (外链域名广度)", "Domains Count", "#d62728"), use_container_width=True)
+            st.plotly_chart(create_yoy_chart(merged_df, "Blog 收录", "Indexed Blog Pages (Blog 收录)", "Blogs Count", freq_code, "#ff7f0e"), use_container_width=True)
+            st.plotly_chart(create_yoy_chart(merged_df, "外链域名广度", "Referring Domains / Breadth (外链域名广度)", "Domains Count", freq_code, "#d62728"), use_container_width=True)
 
 except Exception as e:
     st.error("An error occurred while reading the Google Sheet.")
