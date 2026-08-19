@@ -101,6 +101,10 @@ def load_and_transform_data():
     numeric_cols = [str(c) for c in df_transposed.columns if str(c) not in ['Datum_Raw', 'Datum', '网站要事记']]
     for col in numeric_cols:
         df_transposed[col] = df_transposed[col].apply(clean_number)
+        # Corrigeer decimale percentages (bijv. 0.32 -> 32.00)
+        if any(k in col for k in ['率', '占比', 'Rate', 'Share', 'Percentage']):
+            if df_transposed[col].max() <= 1.0 and df_transposed[col].max() > 0:
+                df_transposed[col] = df_transposed[col] * 100
         
     return df_transposed.sort_values('Datum'), numeric_cols
 
@@ -110,9 +114,12 @@ def create_yoy_chart(df_merged, col, title, y_label, freq_code, color_current="#
     """
     fig = go.Figure()
 
-    if "($)" in y_label or "Revenue" in title:
+    is_percentage = "(%)" in y_label or "Percentage" in y_label or "率" in col or "占比" in col
+    is_currency = "($)" in y_label or "Revenue" in title
+
+    if is_currency:
         hover_template = "%{y:$,.2f}"
-    elif "(%)" in y_label or "Percentage" in y_label:
+    elif is_percentage:
         hover_template = "%{y:.2f}%"
     else:
         hover_template = "%{y:,.0f}"
@@ -144,7 +151,10 @@ def create_yoy_chart(df_merged, col, title, y_label, freq_code, color_current="#
         title=title,
         xaxis_title="Date / Period",
         yaxis_title=y_label,
-        yaxis=dict(rangemode="tozero"),
+        yaxis=dict(
+            rangemode="tozero",
+            ticksuffix="%" if is_percentage else ""
+        ),
         hovermode="x unified",
         hoverlabel=dict(
             bgcolor="white",
@@ -161,7 +171,6 @@ def create_yoy_chart(df_merged, col, title, y_label, freq_code, color_current="#
         height=400
     )
 
-    # Stem de X-as datumweergave af op de gekozen frequentie
     if freq_code == "MS":
         fig.update_xaxes(dtick="M1", tickformat="%b %Y", hoverformat="%B %Y")
     elif freq_code == "QS":
@@ -211,7 +220,6 @@ try:
     }
     freq_code = freq_map[granularity]
 
-    # Rule for aggregation: Sum flow variables, average stock/percentage variables
     agg_rules = {}
     for col in numeric_cols:
         col_str = str(col)
@@ -226,7 +234,6 @@ try:
         df_resampled = df.copy()
 
     # -------------------- SLIMME DATUMFILTERING --------------------
-    # Zorg dat de startdatum mee verschuift naar het begin van de gekozen periode (zodat de maand niet weggeknipt wordt)
     filter_start = start_date
     if freq_code == "MS":
         filter_start = start_date.replace(day=1)
@@ -256,7 +263,7 @@ try:
         suffixes=('', '_LY')
     )
 
-    # -------------------- KPI SUMMARY --------------------
+    # -------------------- KPI SUMMARY WITH % COMPARISONS --------------------
     start_str = start_date.strftime('%d-%m-%Y')
     end_str = end_date.strftime('%d-%m-%Y')
     st.subheader(f"📌 Total Period Summary ({start_str} to {end_str}) — 今年 vs 去年 [{granularity}]")
@@ -285,13 +292,21 @@ try:
     curr_ai_rev = merged_df['AI Assistant 销售额'].sum() if 'AI Assistant 销售额' in merged_df.columns else 0
     ly_ai_rev = merged_df['AI Assistant 销售额_LY'].sum() if 'AI Assistant 销售额_LY' in merged_df.columns else 0
 
+    # Helper function to format deltas with both absolute and percentage YoY changes
+    def format_kpi_delta(diff, ly_val, is_currency=False):
+        pct_change = (diff / ly_val * 100) if ly_val > 0 else 0.0
+        if is_currency:
+            return f"{diff:+,.2f} ({pct_change:+.2f}%) vs 去年"
+        else:
+            return f"{int(diff):+,} ({pct_change:+.2f}%) vs 去年"
+
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         diff_seo_rev = curr_ga4_seo - ly_ga4_seo
         st.metric(
             label="GA4 SEO Revenue (GA4 SEO销售额)",
             value=f"$ {curr_ga4_seo:,.2f}",
-            delta=f"{diff_seo_rev:+,.2f} vs 去年"
+            delta=format_kpi_delta(diff_seo_rev, ly_ga4_seo, is_currency=True)
         )
         st.caption(f"去年: $ {ly_ga4_seo:,.2f} | Superset: $ {curr_superset_seo:,.2f} (去年: $ {ly_superset_seo:,.2f})")
 
@@ -300,16 +315,16 @@ try:
         st.metric(
             label="Total Website Revenue (GA4 网站总销售额)",
             value=f"$ {curr_total_rev:,.2f}",
-            delta=f"{diff_total_rev:+,.2f} vs 去年"
+            delta=format_kpi_delta(diff_total_rev, ly_total_rev, is_currency=True)
         )
-        st.caption(f"去年: $ {ly_total_rev:,.2f} | Superset Share: {curr_superset_share:.1f}% (去年: {ly_superset_share:.1f}%)")
+        st.caption(f"去年: $ {ly_total_rev:,.2f} | Superset Share: {curr_superset_share:.2f}% (去年: {ly_superset_share:.2f}%)")
 
     with col3:
         diff_seo_tr = curr_seo_traffic - ly_seo_traffic
         st.metric(
             label="Total SEO Traffic (SEO流量)",
             value=f"{int(curr_seo_traffic):,}",
-            delta=f"{int(diff_seo_tr):+,} vs 去年"
+            delta=format_kpi_delta(diff_seo_tr, ly_seo_traffic, is_currency=False)
         )
         st.caption(f"去年: {int(ly_seo_traffic):,} | Blog Traffic: {int(curr_blog_traffic):,} (去年: {int(ly_blog_traffic):,})")
 
@@ -318,7 +333,7 @@ try:
         st.metric(
             label="AI Assistant Traffic (AI Assistant 流量)",
             value=f"{int(curr_ai_traffic):,}",
-            delta=f"{int(diff_ai_tr):+,} vs 去年"
+            delta=format_kpi_delta(diff_ai_tr, ly_ai_traffic, is_currency=False)
         )
         st.caption(f"去年: {int(ly_ai_traffic):,} | AI Revenue: $ {curr_ai_rev:,.2f} (去年: $ {ly_ai_rev:,.2f})")
 
