@@ -77,7 +77,6 @@ def clean_number(val, is_pct=False):
     try:
         num = float(s)
         if is_pct:
-            # Als er geen % teken stond en de waarde is tussen 0 en 1 (bijv. 0.3235), schaal naar percentage (32.35)
             if not has_pct_symbol and 0 < abs(num) <= 1.0:
                 num = num * 100
         return num
@@ -303,7 +302,8 @@ try:
         else:
             return f"{int(diff):+,} ({pct_change:+.2f}%) vs 去年"
 
-    col1, col2, col3, col4 = st.columns(4)
+    # 5 KPI Columns for complete visibility
+    col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
         diff_seo_rev = curr_ga4_seo - ly_ga4_seo
         st.metric(
@@ -311,34 +311,43 @@ try:
             value=f"$ {curr_ga4_seo:,.2f}",
             delta=format_kpi_delta(diff_seo_rev, ly_ga4_seo, is_currency=True)
         )
-        st.caption(f"去年: $ {ly_ga4_seo:,.2f} | Superset: $ {curr_superset_seo:,.2f} (去年: $ {ly_superset_seo:,.2f})")
+        st.caption(f"去年: $ {ly_ga4_seo:,.2f}")
 
     with col2:
+        diff_superset_seo = curr_superset_seo - ly_superset_seo
+        st.metric(
+            label="Superset SEO Revenue (Superset SEO销售额)",
+            value=f"$ {curr_superset_seo:,.2f}",
+            delta=format_kpi_delta(diff_superset_seo, ly_superset_seo, is_currency=True)
+        )
+        st.caption(f"去年: $ {ly_superset_seo:,.2f}")
+
+    with col3:
         diff_total_rev = curr_total_rev - ly_total_rev
         st.metric(
             label="Total Website Revenue (GA4 网站总销售额)",
             value=f"$ {curr_total_rev:,.2f}",
             delta=format_kpi_delta(diff_total_rev, ly_total_rev, is_currency=True)
         )
-        st.caption(f"去年: $ {ly_total_rev:,.2f} | Superset Share: {curr_superset_share:.2f}% (去年: {ly_superset_share:.2f}%)")
+        st.caption(f"去年: $ {ly_total_rev:,.2f} | Share: {curr_superset_share:.2f}% (去年: {ly_superset_share:.2f}%)")
 
-    with col3:
+    with col4:
         diff_seo_tr = curr_seo_traffic - ly_seo_traffic
         st.metric(
             label="Total SEO Traffic (SEO流量)",
             value=f"{int(curr_seo_traffic):,}",
             delta=format_kpi_delta(diff_seo_tr, ly_seo_traffic, is_currency=False)
         )
-        st.caption(f"去年: {int(ly_seo_traffic):,} | Blog Traffic: {int(curr_blog_traffic):,} (去年: {int(ly_blog_traffic):,})")
+        st.caption(f"去年: {int(ly_seo_traffic):,} | Blog: {int(curr_blog_traffic):,} (去年: {int(ly_blog_traffic):,})")
 
-    with col4:
+    with col5:
         diff_ai_tr = curr_ai_traffic - ly_ai_traffic
         st.metric(
             label="AI Assistant Traffic (AI Assistant 流量)",
             value=f"{int(curr_ai_traffic):,}",
             delta=format_kpi_delta(diff_ai_tr, ly_ai_traffic, is_currency=False)
         )
-        st.caption(f"去年: {int(ly_ai_traffic):,} | AI Revenue: $ {curr_ai_rev:,.2f} (去年: $ {ly_ai_rev:,.2f})")
+        st.caption(f"去年: {int(ly_ai_traffic):,} | AI Rev: $ {curr_ai_rev:,.2f} (去年: $ {ly_ai_rev:,.2f})")
 
     st.markdown("---")
 
