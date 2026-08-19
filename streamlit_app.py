@@ -58,14 +58,16 @@ st.caption("All metrics individually compared against last year with flexible pe
 # -------------------- DATA FETCHING & TRANSFORMATION --------------------
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1GLAGMkVx5DMXylG0bbdvkzuqTd8IVfDANhcRrAX6LFU/edit?usp=sharing"
 
-def clean_number(val):
+def clean_number(val, is_pct=False):
     """
-    Parses US style formatted numbers like '$8,783.07' or '8,783' into correct floats.
+    Parses US style formatted numbers like '$8,783.07' or percentages into correct floats.
     """
     if pd.isna(val):
         return 0.0
     
-    s = str(val).replace('$', '').replace('€', '').replace('%', '').strip()
+    s_raw = str(val).strip()
+    has_pct_symbol = '%' in s_raw
+    s = s_raw.replace('$', '').replace('€', '').replace('%', '').strip()
     
     if not s or s.lower() == 'nan':
         return 0.0
@@ -73,7 +75,12 @@ def clean_number(val):
     s = s.replace(',', '')
 
     try:
-        return float(s)
+        num = float(s)
+        if is_pct:
+            # Als er geen % teken stond en de waarde is tussen 0 en 1 (bijv. 0.3235), schaal naar percentage (32.35)
+            if not has_pct_symbol and 0 < abs(num) <= 1.0:
+                num = num * 100
+        return num
     except ValueError:
         return 0.0
 
@@ -100,11 +107,8 @@ def load_and_transform_data():
     
     numeric_cols = [str(c) for c in df_transposed.columns if str(c) not in ['Datum_Raw', 'Datum', '网站要事记']]
     for col in numeric_cols:
-        df_transposed[col] = df_transposed[col].apply(clean_number)
-        # Corrigeer decimale percentages (bijv. 0.32 -> 32.00)
-        if any(k in col for k in ['率', '占比', 'Rate', 'Share', 'Percentage']):
-            if df_transposed[col].max() <= 1.0 and df_transposed[col].max() > 0:
-                df_transposed[col] = df_transposed[col] * 100
+        is_pct_col = any(k in col for k in ['率', '占比', 'Rate', 'Share', 'Percentage', '%'])
+        df_transposed[col] = df_transposed[col].apply(lambda v: clean_number(v, is_pct=is_pct_col))
         
     return df_transposed.sort_values('Datum'), numeric_cols
 
@@ -114,7 +118,7 @@ def create_yoy_chart(df_merged, col, title, y_label, freq_code, color_current="#
     """
     fig = go.Figure()
 
-    is_percentage = "(%)" in y_label or "Percentage" in y_label or "率" in col or "占比" in col
+    is_percentage = "(%)" in y_label or "Percentage" in y_label or any(k in col for k in ['率', '占比', '%'])
     is_currency = "($)" in y_label or "Revenue" in title
 
     if is_currency:
@@ -223,7 +227,7 @@ try:
     agg_rules = {}
     for col in numeric_cols:
         col_str = str(col)
-        if "率" in col_str or "占比" in col_str or "Share" in col_str or "Rate" in col_str or "收录" in col_str or "外链" in col_str:
+        if any(k in col_str for k in ['率', '占比', 'Share', 'Rate', '收录', '外链', '%']):
             agg_rules[col] = 'mean'
         else:
             agg_rules[col] = 'sum'
@@ -292,7 +296,6 @@ try:
     curr_ai_rev = merged_df['AI Assistant 销售额'].sum() if 'AI Assistant 销售额' in merged_df.columns else 0
     ly_ai_rev = merged_df['AI Assistant 销售额_LY'].sum() if 'AI Assistant 销售额_LY' in merged_df.columns else 0
 
-    # Helper function to format deltas with both absolute and percentage YoY changes
     def format_kpi_delta(diff, ly_val, is_currency=False):
         pct_change = (diff / ly_val * 100) if ly_val > 0 else 0.0
         if is_currency:
