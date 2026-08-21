@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
 from streamlit_gsheets import GSheetsConnection
 
@@ -60,17 +61,21 @@ SHEET_URL = "https://docs.google.com/spreadsheets/d/1GLAGMkVx5DMXylG0bbdvkzuqTd8
 
 def clean_number(val, is_pct=False):
     """
-    Parses US style formatted numbers like '$8,783.07' or percentages into correct floats.
+    Parses US style formatted numbers into correct floats.
+    Leaves empty/future values as np.nan so averages (e.g. bounce rates) are calculated correctly.
     """
     if pd.isna(val):
-        return 0.0
+        return np.nan
     
     s_raw = str(val).strip()
+    if not s_raw or s_raw.lower() in ['nan', 'none', '-', 'null', '']:
+        return np.nan
+
     has_pct_symbol = '%' in s_raw
     s = s_raw.replace('$', '').replace('€', '').replace('%', '').strip()
-    
-    if not s or s.lower() == 'nan':
-        return 0.0
+
+    if not s:
+        return np.nan
 
     s = s.replace(',', '')
 
@@ -81,7 +86,7 @@ def clean_number(val, is_pct=False):
                 num = num * 100
         return num
     except ValueError:
-        return 0.0
+        return np.nan
 
 @st.cache_data(ttl=60)
 def load_and_transform_data():
@@ -127,11 +132,12 @@ def create_yoy_chart(df_merged, col, title, y_label, freq_code, color_current="#
     else:
         hover_template = "%{y:,.0f}"
 
-    # Current Year (今年)
+    # Current Year (今年) - filter out NaNs so no trailing zeros are drawn
     if col in df_merged.columns:
+        curr_series = df_merged.dropna(subset=[col])
         fig.add_trace(go.Scatter(
-            x=df_merged['Datum'],
-            y=df_merged[col],
+            x=curr_series['Datum'],
+            y=curr_series[col],
             mode='lines+markers',
             name='今年',
             line=dict(color=color_current, width=3),
@@ -141,9 +147,10 @@ def create_yoy_chart(df_merged, col, title, y_label, freq_code, color_current="#
     # Last Year (去年)
     col_ly = f"{col}_LY"
     if col_ly in df_merged.columns:
+        ly_series = df_merged.dropna(subset=[col_ly])
         fig.add_trace(go.Scatter(
-            x=df_merged['Datum'],
-            y=df_merged[col_ly],
+            x=ly_series['Datum'],
+            y=ly_series[col_ly],
             mode='lines+markers',
             name='去年',
             line=dict(color=color_ly, width=2, dash='dash'),
@@ -196,21 +203,19 @@ try:
         ["Daily (日)", "Weekly (周)", "Monthly (月)", "Quarterly (季)", "Yearly (年)"]
     )
 
-    today = pd.Timestamp.now().normalize()
+    # Determine maximum date with actual data
+    df_valid_dates = df.dropna(how='all', subset=numeric_cols)
+    max_data_date = df_valid_dates['Datum'].max().date() if not df_valid_dates.empty else df['Datum'].max().date()
     min_date = df['Datum'].min().date()
-    max_date = df['Datum'].max().date()
 
-    default_end = min(today.date() - pd.Timedelta(days=2), max_date)
-    if default_end < min_date:
-        default_end = max_date
-        
+    default_end = max_data_date
     default_start = max(default_end - pd.Timedelta(days=30), min_date)
 
     start_date, end_date = st.sidebar.date_input(
         "Select Date Range:",
         value=[default_start, default_end],
         min_value=min_date,
-        max_value=max_date
+        max_value=max_data_date
     )
 
     # -------------------- AGGREGATION LOGIC --------------------
@@ -223,20 +228,22 @@ try:
     }
     freq_code = freq_map[granularity]
 
+    # Custom aggregator: mean automatically skips np.nan (no division by 31 when only 19 days exist)
+    # sum skips np.nan, but if all days are nan it returns nan (not 0)
     agg_rules = {}
     for col in numeric_cols:
         col_str = str(col)
         if any(k in col_str for k in ['率', '占比', 'Share', 'Rate', '收录', '外链', '%']):
             agg_rules[col] = 'mean'
         else:
-            agg_rules[col] = 'sum'
+            agg_rules[col] = lambda s: s.sum(min_count=1)
 
     if freq_code != "D":
         df_resampled = df.set_index('Datum').groupby(pd.Grouper(freq=freq_code)).agg(agg_rules).reset_index()
     else:
         df_resampled = df.copy()
 
-    # -------------------- SLIMME DATUMFILTERING --------------------
+    # -------------------- SMART DATE FILTERING --------------------
     filter_start = start_date
     if freq_code == "MS":
         filter_start = start_date.replace(day=1)
@@ -271,29 +278,29 @@ try:
     end_str = end_date.strftime('%d-%m-%Y')
     st.subheader(f"📌 Total Period Summary ({start_str} to {end_str}) — 今年 vs 去年 [{granularity}]")
 
-    curr_ga4_seo = merged_df['GA4 SEO销售额'].sum() if 'GA4 SEO销售额' in merged_df.columns else 0
-    ly_ga4_seo = merged_df['GA4 SEO销售额_LY'].sum() if 'GA4 SEO销售额_LY' in merged_df.columns else 0
+    curr_ga4_seo = merged_df['GA4 SEO销售额'].sum(skipna=True) if 'GA4 SEO销售额' in merged_df.columns else 0
+    ly_ga4_seo = merged_df['GA4 SEO销售额_LY'].sum(skipna=True) if 'GA4 SEO销售额_LY' in merged_df.columns else 0
 
-    curr_superset_seo = merged_df['Superset SEO销售额'].sum() if 'Superset SEO销售额' in merged_df.columns else 0
-    ly_superset_seo = merged_df['Superset SEO销售额_LY'].sum() if 'Superset SEO销售额_LY' in merged_df.columns else 0
+    curr_superset_seo = merged_df['Superset SEO销售额'].sum(skipna=True) if 'Superset SEO销售额' in merged_df.columns else 0
+    ly_superset_seo = merged_df['Superset SEO销售额_LY'].sum(skipna=True) if 'Superset SEO销售额_LY' in merged_df.columns else 0
 
-    curr_total_rev = merged_df['GA4 网站总销售额'].sum() if 'GA4 网站总销售额' in merged_df.columns else 0
-    ly_total_rev = merged_df['GA4 网站总销售额_LY'].sum() if 'GA4 网站总销售额_LY' in merged_df.columns else 0
+    curr_total_rev = merged_df['GA4 网站总销售额'].sum(skipna=True) if 'GA4 网站总销售额' in merged_df.columns else 0
+    ly_total_rev = merged_df['GA4 网站总销售额_LY'].sum(skipna=True) if 'GA4 网站总销售额_LY' in merged_df.columns else 0
 
     curr_superset_share = (curr_superset_seo / curr_total_rev * 100) if curr_total_rev > 0 else 0
     ly_superset_share = (ly_superset_seo / ly_total_rev * 100) if ly_total_rev > 0 else 0
 
-    curr_seo_traffic = merged_df['SEO流量'].sum() if 'SEO流量' in merged_df.columns else 0
-    ly_seo_traffic = merged_df['SEO流量_LY'].sum() if 'SEO流量_LY' in merged_df.columns else 0
+    curr_seo_traffic = merged_df['SEO流量'].sum(skipna=True) if 'SEO流量' in merged_df.columns else 0
+    ly_seo_traffic = merged_df['SEO流量_LY'].sum(skipna=True) if 'SEO流量_LY' in merged_df.columns else 0
 
-    curr_blog_traffic = merged_df['SEO Blog流量'].sum() if 'SEO Blog流量' in merged_df.columns else 0
-    ly_blog_traffic = merged_df['SEO Blog流量_LY'].sum() if 'SEO Blog流量_LY' in merged_df.columns else 0
+    curr_blog_traffic = merged_df['SEO Blog流量'].sum(skipna=True) if 'SEO Blog流量' in merged_df.columns else 0
+    ly_blog_traffic = merged_df['SEO Blog流量_LY'].sum(skipna=True) if 'SEO Blog流量_LY' in merged_df.columns else 0
 
-    curr_ai_traffic = merged_df['AI Assistant 流量'].sum() if 'AI Assistant 流量' in merged_df.columns else 0
-    ly_ai_traffic = merged_df['AI Assistant 流量_LY'].sum() if 'AI Assistant 流量_LY' in merged_df.columns else 0
+    curr_ai_traffic = merged_df['AI Assistant 流量'].sum(skipna=True) if 'AI Assistant 流量' in merged_df.columns else 0
+    ly_ai_traffic = merged_df['AI Assistant 流量_LY'].sum(skipna=True) if 'AI Assistant 流量_LY' in merged_df.columns else 0
 
-    curr_ai_rev = merged_df['AI Assistant 销售额'].sum() if 'AI Assistant 销售额' in merged_df.columns else 0
-    ly_ai_rev = merged_df['AI Assistant 销售额_LY'].sum() if 'AI Assistant 销售额_LY' in merged_df.columns else 0
+    curr_ai_rev = merged_df['AI Assistant 销售额'].sum(skipna=True) if 'AI Assistant 销售额' in merged_df.columns else 0
+    ly_ai_rev = merged_df['AI Assistant 销售额_LY'].sum(skipna=True) if 'AI Assistant 销售额_LY' in merged_df.columns else 0
 
     def format_kpi_delta(diff, ly_val, is_currency=False):
         pct_change = (diff / ly_val * 100) if ly_val > 0 else 0.0
@@ -302,7 +309,7 @@ try:
         else:
             return f"{int(diff):+,} ({pct_change:+.2f}%) vs 去年"
 
-    # 5 KPI Columns for complete visibility
+    # 5 KPI Columns
     col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
         diff_seo_rev = curr_ga4_seo - ly_ga4_seo
