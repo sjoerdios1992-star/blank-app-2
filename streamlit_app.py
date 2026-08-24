@@ -62,7 +62,7 @@ SHEET_URL = "https://docs.google.com/spreadsheets/d/1GLAGMkVx5DMXylG0bbdvkzuqTd8
 def clean_number(val, is_pct=False):
     """
     Parses US style formatted numbers into correct floats.
-    Leaves empty/future values as np.nan so averages (e.g. bounce rates) are calculated correctly.
+    Leaves empty/future values as np.nan so averages and totals are calculated correctly.
     """
     if pd.isna(val):
         return np.nan
@@ -132,7 +132,7 @@ def create_yoy_chart(df_merged, col, title, y_label, freq_code, color_current="#
     else:
         hover_template = "%{y:,.0f}"
 
-    # Current Year (今年) - filter out NaNs so no trailing zeros are drawn
+    # Current Year (今年)
     if col in df_merged.columns:
         curr_series = df_merged.dropna(subset=[col])
         fig.add_trace(go.Scatter(
@@ -203,7 +203,7 @@ try:
         ["Daily (日)", "Weekly (周)", "Monthly (月)", "Quarterly (季)", "Yearly (年)"]
     )
 
-    # Determine maximum date with actual data
+    # Vind de meest recente datum met echte data
     df_valid_dates = df.dropna(how='all', subset=numeric_cols)
     max_data_date = df_valid_dates['Datum'].max().date() if not df_valid_dates.empty else df['Datum'].max().date()
     min_date = df['Datum'].min().date()
@@ -218,7 +218,23 @@ try:
         max_value=max_data_date
     )
 
-    # -------------------- AGGREGATION LOGIC --------------------
+    # -------------------- STAP 1: DAGELIJKSE YOY MATCHING (APPLES TO APPLES) --------------------
+    # We koppelen eerst op dagbasis zodat onvolledige maanden exact hetzelfde aantal dagen vergelijken
+    df_daily = df.copy()
+    YOY_OFFSET = pd.Timedelta(days=364)
+    df_daily['Datum_Vorig_Jaar'] = df_daily['Datum'] - YOY_OFFSET
+
+    cols_to_merge = [c for c in numeric_cols if c in df_daily.columns]
+    daily_merged = pd.merge(
+        df_daily,
+        df_daily[['Datum'] + cols_to_merge],
+        left_on='Datum_Vorig_Jaar',
+        right_on='Datum',
+        how='left',
+        suffixes=('', '_LY')
+    )
+
+    # Filter op de geselecteerde periode
     freq_map = {
         "Daily (日)": "D",
         "Weekly (周)": "W-MON",
@@ -228,22 +244,7 @@ try:
     }
     freq_code = freq_map[granularity]
 
-    # Custom aggregator: mean automatically skips np.nan (no division by 31 when only 19 days exist)
-    # sum skips np.nan, but if all days are nan it returns nan (not 0)
-    agg_rules = {}
-    for col in numeric_cols:
-        col_str = str(col)
-        if any(k in col_str for k in ['率', '占比', 'Share', 'Rate', '收录', '外链', '%']):
-            agg_rules[col] = 'mean'
-        else:
-            agg_rules[col] = lambda s: s.sum(min_count=1)
-
-    if freq_code != "D":
-        df_resampled = df.set_index('Datum').groupby(pd.Grouper(freq=freq_code)).agg(agg_rules).reset_index()
-    else:
-        df_resampled = df.copy()
-
-    # -------------------- SMART DATE FILTERING --------------------
+    # Slimme startdatum zodat de lopende maand/kwartaal niet per ongeluk halverwege wordt afgekapt
     filter_start = start_date
     if freq_code == "MS":
         filter_start = start_date.replace(day=1)
@@ -255,52 +256,52 @@ try:
     elif freq_code == "W-MON":
         filter_start = start_date - pd.Timedelta(days=start_date.weekday())
 
-    current_df = df_resampled[(df_resampled['Datum'].dt.date >= filter_start) & (df_resampled['Datum'].dt.date <= end_date)].copy()
+    filtered_daily = daily_merged[(daily_merged['Datum'].dt.date >= filter_start) & (daily_merged['Datum'].dt.date <= end_date)].copy()
 
-    # -------------------- YOY MATCHING --------------------
-    if freq_code in ["D", "W-MON"]:
-        current_df['Datum_Vorig_Jaar'] = current_df['Datum'] - pd.Timedelta(days=364)
+    # -------------------- STAP 2: AGGREGATIE NA DE MATCHING --------------------
+    all_metrics_cols = numeric_cols + [f"{c}_LY" for c in numeric_cols if f"{c}_LY" in daily_merged.columns]
+
+    agg_rules = {}
+    for col in all_metrics_cols:
+        col_str = str(col)
+        if any(k in col_str for k in ['率', '占比', 'Share', 'Rate', '收录', '外链', '%']):
+            agg_rules[col] = 'mean'
+        else:
+            agg_rules[col] = lambda s: s.sum(min_count=1)
+
+    if freq_code != "D":
+        merged_df = filtered_daily.set_index('Datum').groupby(pd.Grouper(freq=freq_code)).agg(agg_rules).reset_index()
     else:
-        current_df['Datum_Vorig_Jaar'] = current_df['Datum'] - pd.DateOffset(years=1)
-
-    cols_to_merge = [c for c in numeric_cols if c in df_resampled.columns]
-    merged_df = pd.merge(
-        current_df,
-        df_resampled[['Datum'] + cols_to_merge],
-        left_on='Datum_Vorig_Jaar',
-        right_on='Datum',
-        how='left',
-        suffixes=('', '_LY')
-    )
+        merged_df = filtered_daily.copy()
 
     # -------------------- KPI SUMMARY WITH % COMPARISONS --------------------
     start_str = start_date.strftime('%d-%m-%Y')
     end_str = end_date.strftime('%d-%m-%Y')
     st.subheader(f"📌 Total Period Summary ({start_str} to {end_str}) — 今年 vs 去年 [{granularity}]")
 
-    curr_ga4_seo = merged_df['GA4 SEO销售额'].sum(skipna=True) if 'GA4 SEO销售额' in merged_df.columns else 0
-    ly_ga4_seo = merged_df['GA4 SEO销售额_LY'].sum(skipna=True) if 'GA4 SEO销售额_LY' in merged_df.columns else 0
+    curr_ga4_seo = filtered_daily['GA4 SEO销售额'].sum(skipna=True) if 'GA4 SEO销售额' in filtered_daily.columns else 0
+    ly_ga4_seo = filtered_daily['GA4 SEO销售额_LY'].sum(skipna=True) if 'GA4 SEO销售额_LY' in filtered_daily.columns else 0
 
-    curr_superset_seo = merged_df['Superset SEO销售额'].sum(skipna=True) if 'Superset SEO销售额' in merged_df.columns else 0
-    ly_superset_seo = merged_df['Superset SEO销售额_LY'].sum(skipna=True) if 'Superset SEO销售额_LY' in merged_df.columns else 0
+    curr_superset_seo = filtered_daily['Superset SEO销售额'].sum(skipna=True) if 'Superset SEO销售额' in filtered_daily.columns else 0
+    ly_superset_seo = filtered_daily['Superset SEO销售额_LY'].sum(skipna=True) if 'Superset SEO销售额_LY' in filtered_daily.columns else 0
 
-    curr_total_rev = merged_df['GA4 网站总销售额'].sum(skipna=True) if 'GA4 网站总销售额' in merged_df.columns else 0
-    ly_total_rev = merged_df['GA4 网站总销售额_LY'].sum(skipna=True) if 'GA4 网站总销售额_LY' in merged_df.columns else 0
+    curr_total_rev = filtered_daily['GA4 网站总销售额'].sum(skipna=True) if 'GA4 网站总销售额' in filtered_daily.columns else 0
+    ly_total_rev = filtered_daily['GA4 网站总销售额_LY'].sum(skipna=True) if 'GA4 网站总销售额_LY' in filtered_daily.columns else 0
 
     curr_superset_share = (curr_superset_seo / curr_total_rev * 100) if curr_total_rev > 0 else 0
     ly_superset_share = (ly_superset_seo / ly_total_rev * 100) if ly_total_rev > 0 else 0
 
-    curr_seo_traffic = merged_df['SEO流量'].sum(skipna=True) if 'SEO流量' in merged_df.columns else 0
-    ly_seo_traffic = merged_df['SEO流量_LY'].sum(skipna=True) if 'SEO流量_LY' in merged_df.columns else 0
+    curr_seo_traffic = filtered_daily['SEO流量'].sum(skipna=True) if 'SEO流量' in filtered_daily.columns else 0
+    ly_seo_traffic = filtered_daily['SEO流量_LY'].sum(skipna=True) if 'SEO流量_LY' in filtered_daily.columns else 0
 
-    curr_blog_traffic = merged_df['SEO Blog流量'].sum(skipna=True) if 'SEO Blog流量' in merged_df.columns else 0
-    ly_blog_traffic = merged_df['SEO Blog流量_LY'].sum(skipna=True) if 'SEO Blog流量_LY' in merged_df.columns else 0
+    curr_blog_traffic = filtered_daily['SEO Blog流量'].sum(skipna=True) if 'SEO Blog流量' in filtered_daily.columns else 0
+    ly_blog_traffic = filtered_daily['SEO Blog流量_LY'].sum(skipna=True) if 'SEO Blog流量_LY' in filtered_daily.columns else 0
 
-    curr_ai_traffic = merged_df['AI Assistant 流量'].sum(skipna=True) if 'AI Assistant 流量' in merged_df.columns else 0
-    ly_ai_traffic = merged_df['AI Assistant 流量_LY'].sum(skipna=True) if 'AI Assistant 流量_LY' in merged_df.columns else 0
+    curr_ai_traffic = filtered_daily['AI Assistant 流量'].sum(skipna=True) if 'AI Assistant 流量' in filtered_daily.columns else 0
+    ly_ai_traffic = filtered_daily['AI Assistant 流量_LY'].sum(skipna=True) if 'AI Assistant 流量_LY' in filtered_daily.columns else 0
 
-    curr_ai_rev = merged_df['AI Assistant 销售额'].sum(skipna=True) if 'AI Assistant 销售额' in merged_df.columns else 0
-    ly_ai_rev = merged_df['AI Assistant 销售额_LY'].sum(skipna=True) if 'AI Assistant 销售额_LY' in merged_df.columns else 0
+    curr_ai_rev = filtered_daily['AI Assistant 销售额'].sum(skipna=True) if 'AI Assistant 销售额' in filtered_daily.columns else 0
+    ly_ai_rev = filtered_daily['AI Assistant 销售额_LY'].sum(skipna=True) if 'AI Assistant 销售额_LY' in filtered_daily.columns else 0
 
     def format_kpi_delta(diff, ly_val, is_currency=False):
         pct_change = (diff / ly_val * 100) if ly_val > 0 else 0.0
@@ -309,7 +310,6 @@ try:
         else:
             return f"{int(diff):+,} ({pct_change:+.2f}%) vs 去年"
 
-    # 5 KPI Columns
     col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
         diff_seo_rev = curr_ga4_seo - ly_ga4_seo
@@ -318,7 +318,7 @@ try:
             value=f"$ {curr_ga4_seo:,.2f}",
             delta=format_kpi_delta(diff_seo_rev, ly_ga4_seo, is_currency=True)
         )
-        st.caption(f"去年: $ {ly_ga4_seo:,.2f}")
+        st.caption(f"去年 (MTD): $ {ly_ga4_seo:,.2f}")
 
     with col2:
         diff_superset_seo = curr_superset_seo - ly_superset_seo
@@ -327,7 +327,7 @@ try:
             value=f"$ {curr_superset_seo:,.2f}",
             delta=format_kpi_delta(diff_superset_seo, ly_superset_seo, is_currency=True)
         )
-        st.caption(f"去年: $ {ly_superset_seo:,.2f}")
+        st.caption(f"去年 (MTD): $ {ly_superset_seo:,.2f}")
 
     with col3:
         diff_total_rev = curr_total_rev - ly_total_rev
