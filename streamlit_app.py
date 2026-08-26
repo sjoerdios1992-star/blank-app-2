@@ -132,7 +132,7 @@ def create_yoy_chart(df_merged, col, title, y_label, freq_code, color_current="#
     else:
         hover_template = "%{y:,.0f}"
 
-    # Current Year (今年)
+    # Current Year (今年) - filter out NaNs
     if col in df_merged.columns:
         curr_series = df_merged.dropna(subset=[col])
         fig.add_trace(go.Scatter(
@@ -211,15 +211,27 @@ try:
     default_end = max_data_date
     default_start = max(default_end - pd.Timedelta(days=30), min_date)
 
-    start_date, end_date = st.sidebar.date_input(
-        "Select Date Range:",
-        value=[default_start, default_end],
-        min_value=min_date,
-        max_value=max_data_date
-    )
+    col_s1, col_s2 = st.sidebar.columns(2)
+    with col_s1:
+        start_date = st.date_input(
+            "Start Date:",
+            value=default_start,
+            min_value=min_date,
+            max_value=max_data_date
+        )
+    with col_s2:
+        end_date = st.date_input(
+            "End Date:",
+            value=default_end,
+            min_value=min_date,
+            max_value=max_data_date
+        )
+
+    if start_date > end_date:
+        st.sidebar.error("⚠️ Start Date cannot be after End Date.")
+        start_date, end_date = end_date, start_date
 
     # -------------------- STAP 1: DAGELIJKSE YOY MATCHING (APPLES TO APPLES) --------------------
-    # We koppelen eerst op dagbasis zodat onvolledige maanden exact hetzelfde aantal dagen vergelijken
     df_daily = df.copy()
     YOY_OFFSET = pd.Timedelta(days=364)
     df_daily['Datum_Vorig_Jaar'] = df_daily['Datum'] - YOY_OFFSET
@@ -234,7 +246,6 @@ try:
         suffixes=('', '_LY')
     )
 
-    # Filter op de geselecteerde periode
     freq_map = {
         "Daily (日)": "D",
         "Weekly (周)": "W-MON",
@@ -244,7 +255,6 @@ try:
     }
     freq_code = freq_map[granularity]
 
-    # Slimme startdatum zodat de lopende maand/kwartaal niet per ongeluk halverwege wordt afgekapt
     filter_start = start_date
     if freq_code == "MS":
         filter_start = start_date.replace(day=1)
