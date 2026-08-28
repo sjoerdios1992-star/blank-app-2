@@ -90,15 +90,17 @@ def clean_number(val, is_pct=False):
 
 def parse_robust_dates(date_series):
     """
-    Parses dates whether they are strings ('20-08-2026', '2026/08/20') or serial numbers (46250).
+    Accurately parses '2026/8/24', '2026-08-24', '24-08-2026', and Excel numeric serials.
     """
-    # 1. Try direct datetime conversion
-    dates = pd.to_datetime(date_series, errors='coerce', dayfirst=True)
+    s_clean = date_series.astype(str).str.strip()
     
-    # 2. For values that failed, check if they are Excel numeric timestamps (e.g. 45000+)
+    # 1. Probeer eerst direct YYYY/M/D of ISO formaat
+    dates = pd.to_datetime(s_clean, format='mixed', errors='coerce')
+    
+    # 2. Voor Excel seriële datums (bijv. 46250)
     numeric_mask = dates.isna()
     if numeric_mask.any():
-        numeric_vals = pd.to_numeric(date_series[numeric_mask], errors='coerce')
+        numeric_vals = pd.to_numeric(s_clean[numeric_mask], errors='coerce')
         valid_serials = numeric_vals[numeric_vals > 30000]
         if not valid_serials.empty:
             converted_serials = pd.to_datetime(valid_serials, unit='D', origin='1899-12-30')
@@ -125,10 +127,8 @@ def load_and_transform_data():
     
     df_transposed = df_transposed.rename(columns={df_transposed.columns[0]: "Datum_Raw"})
     
-    # Robust date parsing
+    # Datumconversie
     df_transposed['Datum'] = parse_robust_dates(df_transposed['Datum_Raw'])
-    
-    # Drop rows without a valid date or with 1970 timestamps
     df_transposed = df_transposed.dropna(subset=['Datum'])
     df_transposed = df_transposed[df_transposed['Datum'].dt.year >= 2020]
     
@@ -155,7 +155,7 @@ def create_yoy_chart(df_merged, col, title, y_label, freq_code, color_current="#
     else:
         hover_template = "%{y:,.0f}"
 
-    # Current Year (今年) - filter out NaNs
+    # Current Year (今年)
     if col in df_merged.columns:
         curr_series = df_merged.dropna(subset=[col])
         fig.add_trace(go.Scatter(
@@ -230,7 +230,7 @@ try:
         ["Daily (日)", "Weekly (周)", "Monthly (月)", "Quarterly (季)", "Yearly (年)"]
     )
 
-    # Bepaal uiterste datums met geldige gegevens
+    # Uiterste datums bepalen
     df_valid_dates = df.dropna(how='all', subset=numeric_cols)
     max_data_date = df_valid_dates['Datum'].max().date() if not df_valid_dates.empty else df['Datum'].max().date()
     min_date = df['Datum'].min().date()
