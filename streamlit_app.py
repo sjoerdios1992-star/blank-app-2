@@ -88,6 +88,24 @@ def clean_number(val, is_pct=False):
     except ValueError:
         return np.nan
 
+def parse_robust_dates(date_series):
+    """
+    Parses dates whether they are strings ('20-08-2026', '2026/08/20') or serial numbers (46250).
+    """
+    # 1. Try direct datetime conversion
+    dates = pd.to_datetime(date_series, errors='coerce', dayfirst=True)
+    
+    # 2. For values that failed, check if they are Excel numeric timestamps (e.g. 45000+)
+    numeric_mask = dates.isna()
+    if numeric_mask.any():
+        numeric_vals = pd.to_numeric(date_series[numeric_mask], errors='coerce')
+        valid_serials = numeric_vals[numeric_vals > 30000]
+        if not valid_serials.empty:
+            converted_serials = pd.to_datetime(valid_serials, unit='D', origin='1899-12-30')
+            dates.update(converted_serials)
+            
+    return dates
+
 @st.cache_data(ttl=60)
 def load_and_transform_data():
     conn = st.connection("gsheets", type=GSheetsConnection)
@@ -106,8 +124,13 @@ def load_and_transform_data():
     df_transposed.columns = metrics_names
     
     df_transposed = df_transposed.rename(columns={df_transposed.columns[0]: "Datum_Raw"})
-    df_transposed['Datum'] = pd.to_datetime(df_transposed['Datum_Raw'], errors='coerce')
+    
+    # Robust date parsing
+    df_transposed['Datum'] = parse_robust_dates(df_transposed['Datum_Raw'])
+    
+    # Drop rows without a valid date or with 1970 timestamps
     df_transposed = df_transposed.dropna(subset=['Datum'])
+    df_transposed = df_transposed[df_transposed['Datum'].dt.year >= 2020]
     
     numeric_cols = [str(c) for c in df_transposed.columns if str(c) not in ['Datum_Raw', 'Datum', '网站要事记']]
     for col in numeric_cols:
@@ -195,6 +218,10 @@ def create_yoy_chart(df_merged, col, title, y_label, freq_code, color_current="#
 try:
     df, numeric_cols = load_and_transform_data()
 
+    if df.empty:
+        st.error("No valid data rows found in the specified sheet range.")
+        st.stop()
+
     # -------------------- SIDEBAR CONTROLS --------------------
     st.sidebar.header("📅 Date & Granularity Selector")
     
@@ -203,7 +230,7 @@ try:
         ["Daily (日)", "Weekly (周)", "Monthly (月)", "Quarterly (季)", "Yearly (年)"]
     )
 
-    # Vind de meest recente datum met echte data
+    # Bepaal uiterste datums met geldige gegevens
     df_valid_dates = df.dropna(how='all', subset=numeric_cols)
     max_data_date = df_valid_dates['Datum'].max().date() if not df_valid_dates.empty else df['Datum'].max().date()
     min_date = df['Datum'].min().date()
@@ -231,7 +258,7 @@ try:
         st.sidebar.error("⚠️ Start Date cannot be after End Date.")
         start_date, end_date = end_date, start_date
 
-    # -------------------- STAP 1: DAGELIJKSE YOY MATCHING (APPLES TO APPLES) --------------------
+    # -------------------- STAP 1: DAGELIJKSE YOY MATCHING --------------------
     df_daily = df.copy()
     YOY_OFFSET = pd.Timedelta(days=364)
     df_daily['Datum_Vorig_Jaar'] = df_daily['Datum'] - YOY_OFFSET
