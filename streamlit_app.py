@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import datetime
 import plotly.graph_objects as go
 from streamlit_gsheets import GSheetsConnection
 
@@ -88,32 +89,37 @@ def clean_number(val, is_pct=False):
     except ValueError:
         return np.nan
 
-def parse_robust_dates(date_series):
+def parse_single_date(val):
     """
-    Accurately converts date representations like '2026/8/24', '2026-08-24', '24-08-2026'
-    and Excel/Sheets numeric timestamps into pandas datetimes.
+    Converts any date representation (datetime object, string '2026/8/24', or serial) into a pd.Timestamp.
     """
-    s_clean = date_series.astype(str).str.strip()
+    if pd.isna(val):
+        return pd.NaT
+    if isinstance(val, (pd.Timestamp, datetime.datetime, datetime.date)):
+        return pd.to_datetime(val)
     
-    # 1. Probeer expliciet YYYY/M/D en algemeen gemengd formaat
-    dates = pd.to_datetime(s_clean, format='mixed', errors='coerce')
-    
-    # 2. Voor eventuele numerieke Excel-serienummers (zoals 46250)
-    numeric_mask = dates.isna()
-    if numeric_mask.any():
-        numeric_vals = pd.to_numeric(s_clean[numeric_mask], errors='coerce')
-        valid_serials = numeric_vals[numeric_vals > 30000]
-        if not valid_serials.empty:
-            converted_serials = pd.to_datetime(valid_serials, unit='D', origin='1899-12-30')
-            dates.update(converted_serials)
-            
-    return dates
+    s = str(val).strip()
+    if not s or s.lower() in ['nan', 'nat', 'none', '-', '']:
+        return pd.NaT
+
+    # Probeer directe conversie van YYYY/M/D (bijv. 2026/8/24 of 2026/9/1)
+    try:
+        parts = s.replace('-', '/').split('/')
+        if len(parts) == 3 and len(parts[0]) == 4:
+            return pd.Timestamp(year=int(parts[0]), month=int(parts[1]), day=int(parts[2]))
+    except Exception:
+        pass
+
+    # Algemene fallback parsing
+    try:
+        return pd.to_datetime(s, errors='coerce')
+    except Exception:
+        return pd.NaT
 
 @st.cache_data(ttl=60)
 def load_and_transform_data():
     conn = st.connection("gsheets", type=GSheetsConnection)
     
-    # Lees rij 88 t/m 106 in
     raw_df = conn.read(
         spreadsheet=SHEET_URL,
         skiprows=87,
@@ -124,23 +130,33 @@ def load_and_transform_data():
     if raw_df is None or raw_df.empty:
         return pd.DataFrame(), []
 
-    # Zoek de eerste kolom met metrieknamen (kolom A)
+    # Zoek welke rij de datums bevat (bijv. 2026/8/22)
+    date_row_idx = 0
+    for idx in range(len(raw_df)):
+        sample_row = raw_df.iloc[idx, 1:].dropna().head(10)
+        parsed_test = [parse_single_date(x) for x in sample_row]
+        valid_count = sum(1 for d in parsed_test if pd.notna(d) and d.year >= 2020)
+        if valid_count >= 3:
+            date_row_idx = idx
+            break
+
+    # Neem kolom A als metrieknamen
     metrics_names = [str(m).strip() if pd.notna(m) else f"Metric_{i}" for i, m in enumerate(raw_df.iloc[:, 0].tolist())]
-    data_matrix = raw_df.iloc[:, 1:]
     
-    # Transponeer: Kolommen worden rijen (datums als rijen, metrics als kolommen)
-    df_transposed = data_matrix.T
+    # Transponeer de matrix
+    data_matrix = raw_df.iloc[:, 1:]
+    df_transposed = data_matrix.T.reset_index(drop=True)
     df_transposed.columns = metrics_names
     
-    # Identificeer de datumkolom
-    datum_col_name = df_transposed.columns[0]
-    df_transposed['Datum'] = parse_robust_dates(df_transposed[datum_col_name])
+    # Zet de gevonden datumrij om naar een DateTime kolom
+    datum_col = df_transposed.columns[date_row_idx]
+    df_transposed['Datum'] = df_transposed[datum_col].apply(parse_single_date)
     
-    # Filter lege rijen of niet-geparste datums
+    # Filter rijen zonder geldige datum
     df_transposed = df_transposed.dropna(subset=['Datum'])
     df_transposed = df_transposed[df_transposed['Datum'].dt.year >= 2020]
     
-    numeric_cols = [str(c) for c in df_transposed.columns if str(c) not in [datum_col_name, 'Datum', 'Datum_Raw', '网站要事记']]
+    numeric_cols = [str(c) for c in df_transposed.columns if str(c) not in [datum_col, 'Datum', 'Datum_Raw', '网站要事记']]
     for col in numeric_cols:
         is_pct_col = any(k in col for k in ['率', '占比', 'Rate', 'Share', 'Percentage', '%'])
         df_transposed[col] = df_transposed[col].apply(lambda v: clean_number(v, is_pct=is_pct_col))
@@ -227,7 +243,7 @@ try:
     df, numeric_cols = load_and_transform_data()
 
     if df.empty:
-        st.error("No valid date rows found in the specified sheet range (Row 88-106). Please verify that the sheet contains dates in format 2026/8/24.")
+        st.error("No valid date rows found in the specified sheet range (Row 88-106).")
         st.stop()
 
     # -------------------- SIDEBAR CONTROLS --------------------
