@@ -61,7 +61,7 @@ SHEET_URL = "https://docs.google.com/spreadsheets/d/1GLAGMkVx5DMXylG0bbdvkzuqTd8
 
 def clean_number(val, is_pct=False):
     """
-    Parses US style formatted numbers into correct floats.
+    Parses numbers, currency, and percentages into clean floats.
     Leaves empty/future values as np.nan so averages and totals are calculated correctly.
     """
     if pd.isna(val):
@@ -90,14 +90,15 @@ def clean_number(val, is_pct=False):
 
 def parse_robust_dates(date_series):
     """
-    Accurately parses '2026/8/24', '2026-08-24', '24-08-2026', and Excel numeric serials.
+    Accurately converts date representations like '2026/8/24', '2026-08-24', '24-08-2026'
+    and Excel/Sheets numeric timestamps into pandas datetimes.
     """
     s_clean = date_series.astype(str).str.strip()
     
-    # 1. Probeer eerst direct YYYY/M/D of ISO formaat
+    # 1. Probeer expliciet YYYY/M/D en algemeen gemengd formaat
     dates = pd.to_datetime(s_clean, format='mixed', errors='coerce')
     
-    # 2. Voor Excel seriële datums (bijv. 46250)
+    # 2. Voor eventuele numerieke Excel-serienummers (zoals 46250)
     numeric_mask = dates.isna()
     if numeric_mask.any():
         numeric_vals = pd.to_numeric(s_clean[numeric_mask], errors='coerce')
@@ -112,6 +113,7 @@ def parse_robust_dates(date_series):
 def load_and_transform_data():
     conn = st.connection("gsheets", type=GSheetsConnection)
     
+    # Lees rij 88 t/m 106 in
     raw_df = conn.read(
         spreadsheet=SHEET_URL,
         skiprows=87,
@@ -119,20 +121,26 @@ def load_and_transform_data():
         header=None
     )
     
+    if raw_df is None or raw_df.empty:
+        return pd.DataFrame(), []
+
+    # Zoek de eerste kolom met metrieknamen (kolom A)
     metrics_names = [str(m).strip() if pd.notna(m) else f"Metric_{i}" for i, m in enumerate(raw_df.iloc[:, 0].tolist())]
     data_matrix = raw_df.iloc[:, 1:]
     
+    # Transponeer: Kolommen worden rijen (datums als rijen, metrics als kolommen)
     df_transposed = data_matrix.T
     df_transposed.columns = metrics_names
     
-    df_transposed = df_transposed.rename(columns={df_transposed.columns[0]: "Datum_Raw"})
+    # Identificeer de datumkolom
+    datum_col_name = df_transposed.columns[0]
+    df_transposed['Datum'] = parse_robust_dates(df_transposed[datum_col_name])
     
-    # Datumconversie
-    df_transposed['Datum'] = parse_robust_dates(df_transposed['Datum_Raw'])
+    # Filter lege rijen of niet-geparste datums
     df_transposed = df_transposed.dropna(subset=['Datum'])
     df_transposed = df_transposed[df_transposed['Datum'].dt.year >= 2020]
     
-    numeric_cols = [str(c) for c in df_transposed.columns if str(c) not in ['Datum_Raw', 'Datum', '网站要事记']]
+    numeric_cols = [str(c) for c in df_transposed.columns if str(c) not in [datum_col_name, 'Datum', 'Datum_Raw', '网站要事记']]
     for col in numeric_cols:
         is_pct_col = any(k in col for k in ['率', '占比', 'Rate', 'Share', 'Percentage', '%'])
         df_transposed[col] = df_transposed[col].apply(lambda v: clean_number(v, is_pct=is_pct_col))
@@ -219,7 +227,7 @@ try:
     df, numeric_cols = load_and_transform_data()
 
     if df.empty:
-        st.error("No valid data rows found in the specified sheet range.")
+        st.error("No valid date rows found in the specified sheet range (Row 88-106). Please verify that the sheet contains dates in format 2026/8/24.")
         st.stop()
 
     # -------------------- SIDEBAR CONTROLS --------------------
