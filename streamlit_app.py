@@ -57,13 +57,15 @@ if st.sidebar.button("🔒 Log out"):
 st.title("📊 Callie NL — Performance Dashboard (Individual YoY Trends)")
 st.caption("All metrics individually compared against last year with flexible period aggregation (Day / Week / Month / Quarter / Year).")
 
-# -------------------- DATA FETCHING & TRANSFORMATION --------------------
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1GLAGMkVx5DMXylG0bbdvkzuqTd8IVfDANhcRrAX6LFU/edit?usp=sharing"
+# -------------------- DATA URLS --------------------
+SHEET_URL_MAIN = "https://docs.google.com/spreadsheets/d/1GLAGMkVx5DMXylG0bbdvkzuqTd8IVfDANhcRrAX6LFU/edit?usp=sharing"
+SHEET_URL_GSC = "https://docs.google.com/spreadsheets/d/1Qna6ZiJ3tlZzz9U2yL-qTwon3MFGOwRKFXmZGUIcXZ4/edit?gid=0#gid=0"
 
+# -------------------- HELPER FUNCTIONS --------------------
 def clean_number(val, is_pct=False):
     """
     Parses numbers, currency, and percentages into clean floats.
-    Leaves empty/future values as np.nan so averages and totals are calculated correctly.
+    Leaves empty/future values as np.nan.
     """
     if pd.isna(val):
         return np.nan
@@ -91,7 +93,7 @@ def clean_number(val, is_pct=False):
 
 def parse_single_date(val):
     """
-    Converts any date representation (datetime object, string '2026/8/24', or serial) into a pd.Timestamp.
+    Converts any date representation into a pd.Timestamp.
     """
     if pd.isna(val):
         return pd.NaT
@@ -102,7 +104,6 @@ def parse_single_date(val):
     if not s or s.lower() in ['nan', 'nat', 'none', '-', '']:
         return pd.NaT
 
-    # Probeer directe conversie van YYYY/M/D (bijv. 2026/8/24 of 2026/9/1)
     try:
         parts = s.replace('-', '/').split('/')
         if len(parts) == 3 and len(parts[0]) == 4:
@@ -110,18 +111,18 @@ def parse_single_date(val):
     except Exception:
         pass
 
-    # Algemene fallback parsing
     try:
         return pd.to_datetime(s, errors='coerce')
     except Exception:
         return pd.NaT
 
+# -------------------- LOAD SHEET 1 (MAIN DASHBOARD) --------------------
 @st.cache_data(ttl=60)
-def load_and_transform_data():
+def load_and_transform_main_data():
     conn = st.connection("gsheets", type=GSheetsConnection)
     
     raw_df = conn.read(
-        spreadsheet=SHEET_URL,
+        spreadsheet=SHEET_URL_MAIN,
         skiprows=87,
         nrows=19,
         header=None
@@ -130,7 +131,6 @@ def load_and_transform_data():
     if raw_df is None or raw_df.empty:
         return pd.DataFrame(), []
 
-    # Zoek welke rij de datums bevat (bijv. 2026/8/22)
     date_row_idx = 0
     for idx in range(len(raw_df)):
         sample_row = raw_df.iloc[idx, 1:].dropna().head(10)
@@ -140,19 +140,15 @@ def load_and_transform_data():
             date_row_idx = idx
             break
 
-    # Neem kolom A als metrieknamen
     metrics_names = [str(m).strip() if pd.notna(m) else f"Metric_{i}" for i, m in enumerate(raw_df.iloc[:, 0].tolist())]
-    
-    # Transponeer de matrix
     data_matrix = raw_df.iloc[:, 1:]
+    
     df_transposed = data_matrix.T.reset_index(drop=True)
     df_transposed.columns = metrics_names
     
-    # Zet de gevonden datumrij om naar een DateTime kolom
     datum_col = df_transposed.columns[date_row_idx]
     df_transposed['Datum'] = df_transposed[datum_col].apply(parse_single_date)
     
-    # Filter rijen zonder geldige datum
     df_transposed = df_transposed.dropna(subset=['Datum'])
     df_transposed = df_transposed[df_transposed['Datum'].dt.year >= 2020]
     
@@ -163,10 +159,57 @@ def load_and_transform_data():
         
     return df_transposed.sort_values('Datum'), numeric_cols
 
+# -------------------- LOAD SHEET 2 (SEO WEEKLY DATA GSC) --------------------
+@st.cache_data(ttl=60)
+def load_gsc_weekly_data():
+    """
+    Loads vertically structured weekly GSC data.
+    """
+    try:
+        conn = st.connection("gsheets", type=GSheetsConnection)
+        raw_gsc = conn.read(spreadsheet=SHEET_URL_GSC)
+        
+        if raw_gsc is None or raw_gsc.empty:
+            return pd.DataFrame(), []
+
+        df_gsc = raw_gsc.copy()
+        
+        # Zoek de kolom die datums bevat
+        date_col_name = None
+        for col in df_gsc.columns:
+            if any(k in str(col).lower() for k in ['date', 'datum', 'week', '日期', '时间']):
+                date_col_name = col
+                break
+        
+        if date_col_name is None:
+            # Fallback: controleer welke kolom het beste als datum geparst kan worden
+            for col in df_gsc.columns:
+                parsed_sample = df_gsc[col].dropna().head(5).apply(parse_single_date)
+                if parsed_sample.notna().sum() >= 3:
+                    date_col_name = col
+                    break
+
+        if date_col_name:
+            df_gsc['Datum'] = df_gsc[date_col_name].apply(parse_single_date)
+            df_gsc = df_gsc.dropna(subset=['Datum']).sort_values('Datum')
+        else:
+            df_gsc['Datum'] = pd.date_range(end=pd.Timestamp.now(), periods=len(df_gsc), freq='W-MON')
+
+        gsc_numeric_cols = []
+        for col in df_gsc.columns:
+            if col not in ['Datum', date_col_name]:
+                is_pct = any(k in str(col).lower() for k in ['%', 'ctr', 'rate', '率', '占比'])
+                # Test of kolom nummers bevat
+                converted = df_gsc[col].apply(lambda v: clean_number(v, is_pct=is_pct))
+                if converted.notna().sum() > 0:
+                    df_gsc[col] = converted
+                    gsc_numeric_cols.append(col)
+
+        return df_gsc, gsc_numeric_cols
+    except Exception as e:
+        return pd.DataFrame(), []
+
 def create_yoy_chart(df_merged, col, title, y_label, freq_code, color_current="#1f77b4", color_ly="#aec7e8"):
-    """
-    Creates an individual YoY chart with custom hover formatting and frequency-matched x-axis format.
-    """
     fig = go.Figure()
 
     is_percentage = "(%)" in y_label or "Percentage" in y_label or any(k in col for k in ['率', '占比', '%'])
@@ -179,7 +222,6 @@ def create_yoy_chart(df_merged, col, title, y_label, freq_code, color_current="#
     else:
         hover_template = "%{y:,.0f}"
 
-    # Current Year (今年)
     if col in df_merged.columns:
         curr_series = df_merged.dropna(subset=[col])
         fig.add_trace(go.Scatter(
@@ -191,7 +233,6 @@ def create_yoy_chart(df_merged, col, title, y_label, freq_code, color_current="#
             hovertemplate=hover_template
         ))
     
-    # Last Year (去年)
     col_ly = f"{col}_LY"
     if col_ly in df_merged.columns:
         ly_series = df_merged.dropna(subset=[col_ly])
@@ -213,17 +254,8 @@ def create_yoy_chart(df_merged, col, title, y_label, freq_code, color_current="#
             ticksuffix="%" if is_percentage else ""
         ),
         hovermode="x unified",
-        hoverlabel=dict(
-            bgcolor="white",
-            font_size=13
-        ),
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="right",
-            x=1
-        ),
+        hoverlabel=dict(bgcolor="white", font_size=13),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         margin=dict(l=20, r=20, t=50, b=20),
         height=400
     )
@@ -240,10 +272,11 @@ def create_yoy_chart(df_merged, col, title, y_label, freq_code, color_current="#
     return fig
 
 try:
-    df, numeric_cols = load_and_transform_data()
+    df, numeric_cols = load_and_transform_main_data()
+    df_gsc, gsc_numeric_cols = load_gsc_weekly_data()
 
     if df.empty:
-        st.error("No valid date rows found in the specified sheet range (Row 88-106).")
+        st.error("No valid date rows found in the main sheet.")
         st.stop()
 
     # -------------------- SIDEBAR CONTROLS --------------------
@@ -254,7 +287,6 @@ try:
         ["Daily (日)", "Weekly (周)", "Monthly (月)", "Quarterly (季)", "Yearly (年)"]
     )
 
-    # Uiterste datums bepalen
     df_valid_dates = df.dropna(how='all', subset=numeric_cols)
     max_data_date = df_valid_dates['Datum'].max().date() if not df_valid_dates.empty else df['Datum'].max().date()
     min_date = df['Datum'].min().date()
@@ -264,19 +296,9 @@ try:
 
     col_s1, col_s2 = st.sidebar.columns(2)
     with col_s1:
-        start_date = st.date_input(
-            "Start Date:",
-            value=default_start,
-            min_value=min_date,
-            max_value=max_data_date
-        )
+        start_date = st.date_input("Start Date:", value=default_start, min_value=min_date, max_value=max_data_date)
     with col_s2:
-        end_date = st.date_input(
-            "End Date:",
-            value=default_end,
-            min_value=min_date,
-            max_value=max_data_date
-        )
+        end_date = st.date_input("End Date:", value=default_end, min_value=min_date, max_value=max_data_date)
 
     if start_date > end_date:
         st.sidebar.error("⚠️ Start Date cannot be after End Date.")
@@ -422,7 +444,12 @@ try:
     # -------------------- INDIVIDUAL CHARTS BY TAB --------------------
     st.subheader(f"📈 Performance Trends [{granularity}]")
 
-    tab1, tab2, tab3 = st.tabs(["💰 Revenue Metrics", "📈 Traffic Metrics", "🔍 SEO & Backlink Status"])
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "💰 Revenue Metrics", 
+        "📈 Traffic Metrics", 
+        "🔍 SEO & Backlink Status",
+        "📊 SEO weekly data GSC"
+    ])
 
     # TAB 1: REVENUE METRICS
     with tab1:
@@ -457,6 +484,53 @@ try:
             st.plotly_chart(create_yoy_chart(merged_df, "Blog 收录", "Indexed Blog Pages (Blog 收录)", "Blogs Count", freq_code, "#ff7f0e"), use_container_width=True)
             st.plotly_chart(create_yoy_chart(merged_df, "外链域名广度", "Referring Domains / Breadth (外链域名广度)", "Domains Count", freq_code, "#d62728"), use_container_width=True)
 
+    # TAB 4: SEO WEEKLY DATA GSC (NIEUW TABBLAD)
+    with tab4:
+        st.subheader("🔍 Google Search Console — Weekly Trends")
+        if df_gsc.empty:
+            st.warning("No data found or Google Sheet access is missing. Please ensure the Service Account email is added to the GSC sheet with Viewer permissions.")
+        else:
+            # Filter GSC data op de geselecteerde datumrange
+            filtered_gsc = df_gsc[(df_gsc['Datum'].dt.date >= start_date) & (df_gsc['Datum'].dt.date <= end_date)].copy()
+            if filtered_gsc.empty:
+                filtered_gsc = df_gsc.copy()
+
+            # Dynamische grafieken genereren voor alle kolommen in Sheet 2
+            if gsc_numeric_cols:
+                cols_per_row = 2
+                chart_cols = st.columns(cols_per_row)
+                colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b"]
+                
+                for idx, col_name in enumerate(gsc_numeric_cols):
+                    c_idx = idx % cols_per_row
+                    with chart_cols[c_idx]:
+                        fig_gsc = go.Figure()
+                        is_pct = any(k in str(col_name).lower() for k in ['%', 'ctr', 'rate', '率', '占比'])
+                        hover_fmt = "%{y:.2f}%" if is_pct else "%{y:,.2f}"
+
+                        fig_gsc.add_trace(go.Scatter(
+                            x=filtered_gsc['Datum'],
+                            y=filtered_gsc[col_name],
+                            mode='lines+markers',
+                            name=str(col_name),
+                            line=dict(color=colors[idx % len(colors)], width=3),
+                            hovertemplate=hover_fmt
+                        ))
+                        
+                        fig_gsc.update_layout(
+                            title=f"{col_name} (Weekly)",
+                            xaxis_title="Week",
+                            yaxis_title=str(col_name),
+                            hovermode="x unified",
+                            margin=dict(l=20, r=20, t=50, b=20),
+                            height=380
+                        )
+                        fig_gsc.update_xaxes(hoverformat="%d-%m-%Y")
+                        st.plotly_chart(fig_gsc, use_container_width=True)
+
+            st.markdown("#### 📋 Data Overview")
+            st.dataframe(filtered_gsc.sort_values('Datum', ascending=False), use_container_width=True)
+
 except Exception as e:
-    st.error("An error occurred while reading the Google Sheet.")
+    st.error("An error occurred while reading the Google Sheets.")
     st.write(f"Technical details: {e}")
