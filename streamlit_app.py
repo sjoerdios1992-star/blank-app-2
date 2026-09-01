@@ -163,7 +163,7 @@ def load_and_transform_main_data():
 @st.cache_data(ttl=60)
 def load_gsc_weekly_data():
     """
-    Loads vertically structured weekly GSC data.
+    Loads vertically structured daily/weekly GSC data and cleans metrics.
     """
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
@@ -174,7 +174,7 @@ def load_gsc_weekly_data():
 
         df_gsc = raw_gsc.copy()
         
-        # Zoek de kolom die datums bevat
+        # Identificeer datumkolom
         date_col_name = None
         for col in df_gsc.columns:
             if any(k in str(col).lower() for k in ['date', 'datum', 'week', '日期', '时间']):
@@ -182,7 +182,6 @@ def load_gsc_weekly_data():
                 break
         
         if date_col_name is None:
-            # Fallback: controleer welke kolom het beste als datum geparst kan worden
             for col in df_gsc.columns:
                 parsed_sample = df_gsc[col].dropna().head(5).apply(parse_single_date)
                 if parsed_sample.notna().sum() >= 3:
@@ -193,19 +192,19 @@ def load_gsc_weekly_data():
             df_gsc['Datum'] = df_gsc[date_col_name].apply(parse_single_date)
             df_gsc = df_gsc.dropna(subset=['Datum']).sort_values('Datum')
         else:
-            df_gsc['Datum'] = pd.date_range(end=pd.Timestamp.now(), periods=len(df_gsc), freq='W-MON')
+            df_gsc['Datum'] = pd.date_range(end=pd.Timestamp.now(), periods=len(df_gsc), freq='D')
 
         gsc_numeric_cols = []
         for col in df_gsc.columns:
             if col not in ['Datum', date_col_name]:
-                is_pct = any(k in str(col).lower() for k in ['%', 'ctr', 'rate', '率', '占比'])
-                # Test of kolom nummers bevat
+                col_name_str = str(col).strip()
+                is_pct = any(k in col_name_str.lower() for k in ['%', 'ctr', 'rate', '率', '占比'])
                 converted = df_gsc[col].apply(lambda v: clean_number(v, is_pct=is_pct))
                 if converted.notna().sum() > 0:
                     df_gsc[col] = converted
                     gsc_numeric_cols.append(col)
 
-        return df_gsc, gsc_numeric_cols
+        return df_gsc.sort_values('Datum'), gsc_numeric_cols
     except Exception as e:
         return pd.DataFrame(), []
 
@@ -214,14 +213,18 @@ def create_yoy_chart(df_merged, col, title, y_label, freq_code, color_current="#
 
     is_percentage = "(%)" in y_label or "Percentage" in y_label or any(k in col for k in ['率', '占比', '%'])
     is_currency = "($)" in y_label or "Revenue" in title
+    is_rank = "排名" in col or "Position" in col or "Rank" in col
 
     if is_currency:
         hover_template = "%{y:$,.2f}"
     elif is_percentage:
         hover_template = "%{y:.2f}%"
+    elif is_rank:
+        hover_template = "%{y:.1f}"
     else:
         hover_template = "%{y:,.0f}"
 
+    # Current Year (今年)
     if col in df_merged.columns:
         curr_series = df_merged.dropna(subset=[col])
         fig.add_trace(go.Scatter(
@@ -233,6 +236,7 @@ def create_yoy_chart(df_merged, col, title, y_label, freq_code, color_current="#
             hovertemplate=hover_template
         ))
     
+    # Last Year (去年)
     col_ly = f"{col}_LY"
     if col_ly in df_merged.columns:
         ly_series = df_merged.dropna(subset=[col_ly])
@@ -250,7 +254,8 @@ def create_yoy_chart(df_merged, col, title, y_label, freq_code, color_current="#
         xaxis_title="Date / Period",
         yaxis_title=y_label,
         yaxis=dict(
-            rangemode="tozero",
+            rangemode="tozero" if not is_rank else "normal",
+            autorange=True if not is_rank else "reversed", # Positie 1 bovenaan bij rankings
             ticksuffix="%" if is_percentage else ""
         ),
         hovermode="x unified",
@@ -304,7 +309,7 @@ try:
         st.sidebar.error("⚠️ Start Date cannot be after End Date.")
         start_date, end_date = end_date, start_date
 
-    # -------------------- STAP 1: DAGELIJKSE YOY MATCHING --------------------
+    # -------------------- STAP 1: DAGELIJKSE YOY MATCHING (MAIN SHEET) --------------------
     df_daily = df.copy()
     YOY_OFFSET = pd.Timedelta(days=364)
     df_daily['Datum_Vorig_Jaar'] = df_daily['Datum'] - YOY_OFFSET
@@ -341,7 +346,7 @@ try:
 
     filtered_daily = daily_merged[(daily_merged['Datum'].dt.date >= filter_start) & (daily_merged['Datum'].dt.date <= end_date)].copy()
 
-    # -------------------- STAP 2: AGGREGATIE NA DE MATCHING --------------------
+    # -------------------- STAP 2: AGGREGATIE MAIN SHEET --------------------
     all_metrics_cols = numeric_cols + [f"{c}_LY" for c in numeric_cols if f"{c}_LY" in daily_merged.columns]
 
     agg_rules = {}
@@ -356,6 +361,40 @@ try:
         merged_df = filtered_daily.set_index('Datum').groupby(pd.Grouper(freq=freq_code)).agg(agg_rules).reset_index()
     else:
         merged_df = filtered_daily.copy()
+
+    # -------------------- STAP 3: YOY MATCHING & AGGREGATIE GSC SHEET --------------------
+    if not df_gsc.empty:
+        df_gsc_daily = df_gsc.copy()
+        df_gsc_daily['Datum_Vorig_Jaar'] = df_gsc_daily['Datum'] - YOY_OFFSET
+        gsc_cols_to_merge = [c for c in gsc_numeric_cols if c in df_gsc_daily.columns]
+
+        gsc_daily_merged = pd.merge(
+            df_gsc_daily,
+            df_gsc_daily[['Datum'] + gsc_cols_to_merge],
+            left_on='Datum_Vorig_Jaar',
+            right_on='Datum',
+            how='left',
+            suffixes=('', '_LY')
+        )
+
+        filtered_gsc_daily = gsc_daily_merged[(gsc_daily_merged['Datum'].dt.date >= filter_start) & (gsc_daily_merged['Datum'].dt.date <= end_date)].copy()
+
+        all_gsc_cols = gsc_numeric_cols + [f"{c}_LY" for c in gsc_numeric_cols if f"{c}_LY" in gsc_daily_merged.columns]
+        gsc_agg_rules = {}
+        for col in all_gsc_cols:
+            col_str = str(col)
+            # Gemiddelde voor posities en percentages, som voor clicks en vertoningen
+            if any(k in col_str.lower() for k in ['排名', 'position', 'rank', 'ctr', '率', '占比', '%']):
+                gsc_agg_rules[col] = 'mean'
+            else:
+                gsc_agg_rules[col] = lambda s: s.sum(min_count=1)
+
+        if freq_code != "D":
+            merged_gsc_df = filtered_gsc_daily.set_index('Datum').groupby(pd.Grouper(freq=freq_code)).agg(gsc_agg_rules).reset_index()
+        else:
+            merged_gsc_df = filtered_gsc_daily.copy()
+    else:
+        merged_gsc_df = pd.DataFrame()
 
     # -------------------- KPI SUMMARY WITH % COMPARISONS --------------------
     start_str = start_date.strftime('%d-%m-%Y')
@@ -484,52 +523,45 @@ try:
             st.plotly_chart(create_yoy_chart(merged_df, "Blog 收录", "Indexed Blog Pages (Blog 收录)", "Blogs Count", freq_code, "#ff7f0e"), use_container_width=True)
             st.plotly_chart(create_yoy_chart(merged_df, "外链域名广度", "Referring Domains / Breadth (外链域名广度)", "Domains Count", freq_code, "#d62728"), use_container_width=True)
 
-    # TAB 4: SEO WEEKLY DATA GSC (NIEUW TABBLAD)
+    # TAB 4: SEO WEEKLY DATA GSC (MET YOY VERGELIJKING)
     with tab4:
-        st.subheader("🔍 Google Search Console — Weekly Trends")
-        if df_gsc.empty:
+        st.subheader(f"🔍 Google Search Console — Performance Trends [{granularity}]")
+        if df_gsc.empty or merged_gsc_df.empty:
             st.warning("No data found or Google Sheet access is missing. Please ensure the Service Account email is added to the GSC sheet with Viewer permissions.")
         else:
-            # Filter GSC data op de geselecteerde datumrange
-            filtered_gsc = df_gsc[(df_gsc['Datum'].dt.date >= start_date) & (df_gsc['Datum'].dt.date <= end_date)].copy()
-            if filtered_gsc.empty:
-                filtered_gsc = df_gsc.copy()
-
-            # Dynamische grafieken genereren voor alle kolommen in Sheet 2
             if gsc_numeric_cols:
                 cols_per_row = 2
                 chart_cols = st.columns(cols_per_row)
-                colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b"]
+                colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#17becf", "#bcbd22", "#e377c2", "#7f7f7f"]
                 
                 for idx, col_name in enumerate(gsc_numeric_cols):
                     c_idx = idx % cols_per_row
                     with chart_cols[c_idx]:
-                        fig_gsc = go.Figure()
                         is_pct = any(k in str(col_name).lower() for k in ['%', 'ctr', 'rate', '率', '占比'])
-                        hover_fmt = "%{y:.2f}%" if is_pct else "%{y:,.2f}"
-
-                        fig_gsc.add_trace(go.Scatter(
-                            x=filtered_gsc['Datum'],
-                            y=filtered_gsc[col_name],
-                            mode='lines+markers',
-                            name=str(col_name),
-                            line=dict(color=colors[idx % len(colors)], width=3),
-                            hovertemplate=hover_fmt
-                        ))
+                        is_pos = any(k in str(col_name).lower() for k in ['排名', 'position', 'rank'])
                         
-                        fig_gsc.update_layout(
-                            title=f"{col_name} (Weekly)",
-                            xaxis_title="Week",
-                            yaxis_title=str(col_name),
-                            hovermode="x unified",
-                            margin=dict(l=20, r=20, t=50, b=20),
-                            height=380
+                        if is_pct:
+                            y_label = "Percentage (%)"
+                        elif is_pos:
+                            y_label = "Average Position"
+                        else:
+                            y_label = "Count / Total"
+
+                        st.plotly_chart(
+                            create_yoy_chart(
+                                merged_gsc_df, 
+                                col_name, 
+                                f"{col_name} (今年 vs 去年)", 
+                                y_label, 
+                                freq_code, 
+                                color_current=colors[idx % len(colors)],
+                                color_ly="#d3d3d3"
+                            ), 
+                            use_container_width=True
                         )
-                        fig_gsc.update_xaxes(hoverformat="%d-%m-%Y")
-                        st.plotly_chart(fig_gsc, use_container_width=True)
 
             st.markdown("#### 📋 Data Overview")
-            st.dataframe(filtered_gsc.sort_values('Datum', ascending=False), use_container_width=True)
+            st.dataframe(merged_gsc_df.sort_values('Datum', ascending=False), use_container_width=True)
 
 except Exception as e:
     st.error("An error occurred while reading the Google Sheets.")
