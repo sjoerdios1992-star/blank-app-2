@@ -207,14 +207,15 @@ def load_gsc_weekly_data():
 def create_yoy_chart(df_merged, col, title, y_label, freq_code, color_current="#1f77b4", color_ly="#aec7e8"):
     fig = go.Figure()
 
-    is_percentage = "(%)" in y_label or "Percentage" in y_label or any(k in col for k in ['率', '占比', '%'])
-    is_currency = "($)" in y_label or "Revenue" in title
+    is_percentage = "(%)" in y_label or "Percentage" in y_label or "Share" in y_label or any(k in col for k in ['率', '占比', '%'])
     is_rank = "排名" in col or "Position" in col or "Rank" in col
+    is_currency = ("($)" in y_label or "Revenue" in title) and not is_percentage
 
-    if is_currency:
-        hover_template = "%{y:$,.2f}"
-    elif is_percentage:
+    # Procenten krijgen altijd absolute prioriteit voor hover en assen
+    if is_percentage:
         hover_template = "%{y:.2f}%"
+    elif is_currency:
+        hover_template = "%{y:$,.2f}"
     elif is_rank:
         hover_template = "%{y:.1f}"
     else:
@@ -290,7 +291,7 @@ try:
     max_data_date = df_valid_dates['Datum'].max().date() if not df_valid_dates.empty else df['Datum'].max().date()
     min_date = df['Datum'].min().date()
 
-    # STANDAARD DATUM: Eergisteren (vandaag - 2 dagen) & 30 dagen daarvoor
+    # Standaard datumselectie: Vandaag - 2 dagen (eergisteren) & 30 dagen terug
     today_date = pd.Timestamp.now().date()
     target_end = today_date - pd.Timedelta(days=2)
     default_end = min(target_end, max_data_date)
@@ -362,8 +363,7 @@ try:
     else:
         merged_df = filtered_daily.copy()
 
-    # BEREKEN SUPERSET SHARE RECHTSTREEKS UIT DE CIJFERS
-    # Vind Superset Total Revenue en Superset SEO Revenue
+    # Dynamische Superset Total Revenue detectie
     superset_tot_col = None
     for c in ["Superset 网站总销售额", "Superset 总销售额", "Superset销售额", "GA4 网站总销售额"]:
         if c in merged_df.columns:
@@ -519,11 +519,9 @@ try:
         with col_a:
             st.plotly_chart(create_yoy_chart(merged_df, "GA4 SEO销售额", "GA4 SEO Revenue (GA4 SEO销售额)", "Revenue ($)", freq_code, "#1f77b4"), use_container_width=True)
             st.plotly_chart(create_yoy_chart(merged_df, "GA4 网站总销售额", "Total Website Revenue (GA4 网站总销售额)", "Revenue ($)", freq_code, "#2ca02c"), use_container_width=True)
-            # DYNAMISCH BEREKENDE SUPERSET SHARE
             st.plotly_chart(create_yoy_chart(merged_df, "Superset_Share_Calculated", "Superset SEO Revenue Share (Superset SEO销售额占比)", "Percentage (%)", freq_code, "#9467bd"), use_container_width=True)
         with col_b:
             st.plotly_chart(create_yoy_chart(merged_df, "Superset SEO销售额", "Superset SEO Revenue (Superset SEO销售额)", "Revenue ($)", freq_code, "#ff7f0e"), use_container_width=True)
-            # SUPERSET TOTALE OMZET
             if superset_tot_col:
                 st.plotly_chart(create_yoy_chart(merged_df, superset_tot_col, f"Total Superset Revenue ({superset_tot_col})", "Revenue ($)", freq_code, "#e377c2"), use_container_width=True)
             st.plotly_chart(create_yoy_chart(merged_df, "AI Assistant 销售额", "AI Assistant Revenue (AI Assistant 销售额)", "Revenue ($)", freq_code, "#d62728"), use_container_width=True)
