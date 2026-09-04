@@ -162,9 +162,6 @@ def load_and_transform_main_data():
 # -------------------- LOAD SHEET 2 (SEO WEEKLY DATA GSC) --------------------
 @st.cache_data(ttl=60)
 def load_gsc_weekly_data():
-    """
-    Loads vertically structured daily/weekly GSC data and cleans metrics.
-    """
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
         raw_gsc = conn.read(spreadsheet=SHEET_URL_GSC)
@@ -174,7 +171,6 @@ def load_gsc_weekly_data():
 
         df_gsc = raw_gsc.copy()
         
-        # Identificeer datumkolom
         date_col_name = None
         for col in df_gsc.columns:
             if any(k in str(col).lower() for k in ['date', 'datum', 'week', '日期', '时间']):
@@ -224,7 +220,6 @@ def create_yoy_chart(df_merged, col, title, y_label, freq_code, color_current="#
     else:
         hover_template = "%{y:,.0f}"
 
-    # Current Year (今年)
     if col in df_merged.columns:
         curr_series = df_merged.dropna(subset=[col])
         fig.add_trace(go.Scatter(
@@ -236,7 +231,6 @@ def create_yoy_chart(df_merged, col, title, y_label, freq_code, color_current="#
             hovertemplate=hover_template
         ))
     
-    # Last Year (去年)
     col_ly = f"{col}_LY"
     if col_ly in df_merged.columns:
         ly_series = df_merged.dropna(subset=[col_ly])
@@ -255,7 +249,7 @@ def create_yoy_chart(df_merged, col, title, y_label, freq_code, color_current="#
         yaxis_title=y_label,
         yaxis=dict(
             rangemode="tozero" if not is_rank else "normal",
-            autorange=True if not is_rank else "reversed", # Positie 1 bovenaan bij rankings
+            autorange=True if not is_rank else "reversed",
             ticksuffix="%" if is_percentage else ""
         ),
         hovermode="x unified",
@@ -296,7 +290,13 @@ try:
     max_data_date = df_valid_dates['Datum'].max().date() if not df_valid_dates.empty else df['Datum'].max().date()
     min_date = df['Datum'].min().date()
 
-    default_end = max_data_date
+    # STANDAARD DATUM: Eergisteren (vandaag - 2 dagen) & 30 dagen daarvoor
+    today_date = pd.Timestamp.now().date()
+    target_end = today_date - pd.Timedelta(days=2)
+    default_end = min(target_end, max_data_date)
+    if default_end < min_date:
+        default_end = max_data_date
+
     default_start = max(default_end - pd.Timedelta(days=30), min_date)
 
     col_s1, col_s2 = st.sidebar.columns(2)
@@ -362,6 +362,27 @@ try:
     else:
         merged_df = filtered_daily.copy()
 
+    # BEREKEN SUPERSET SHARE RECHTSTREEKS UIT DE CIJFERS
+    # Vind Superset Total Revenue en Superset SEO Revenue
+    superset_tot_col = None
+    for c in ["Superset 网站总销售额", "Superset 总销售额", "Superset销售额", "GA4 网站总销售额"]:
+        if c in merged_df.columns:
+            superset_tot_col = c
+            break
+
+    if "Superset SEO销售额" in merged_df.columns and superset_tot_col:
+        merged_df['Superset_Share_Calculated'] = np.where(
+            merged_df[superset_tot_col] > 0,
+            (merged_df['Superset SEO销售额'] / merged_df[superset_tot_col]) * 100,
+            np.nan
+        )
+    if "Superset SEO销售额_LY" in merged_df.columns and f"{superset_tot_col}_LY" in merged_df.columns:
+        merged_df['Superset_Share_Calculated_LY'] = np.where(
+            merged_df[f"{superset_tot_col}_LY"] > 0,
+            (merged_df['Superset SEO销售额_LY'] / merged_df[f"{superset_tot_col}_LY"]) * 100,
+            np.nan
+        )
+
     # -------------------- STAP 3: YOY MATCHING & AGGREGATIE GSC SHEET --------------------
     if not df_gsc.empty:
         df_gsc_daily = df_gsc.copy()
@@ -383,7 +404,6 @@ try:
         gsc_agg_rules = {}
         for col in all_gsc_cols:
             col_str = str(col)
-            # Gemiddelde voor posities en percentages, som voor clicks en vertoningen
             if any(k in col_str.lower() for k in ['排名', 'position', 'rank', 'ctr', '率', '占比', '%']):
                 gsc_agg_rules[col] = 'mean'
             else:
@@ -410,8 +430,11 @@ try:
     curr_total_rev = filtered_daily['GA4 网站总销售额'].sum(skipna=True) if 'GA4 网站总销售额' in filtered_daily.columns else 0
     ly_total_rev = filtered_daily['GA4 网站总销售额_LY'].sum(skipna=True) if 'GA4 网站总销售额_LY' in filtered_daily.columns else 0
 
-    curr_superset_share = (curr_superset_seo / curr_total_rev * 100) if curr_total_rev > 0 else 0
-    ly_superset_share = (ly_superset_seo / ly_total_rev * 100) if ly_total_rev > 0 else 0
+    curr_superset_tot = filtered_daily[superset_tot_col].sum(skipna=True) if superset_tot_col and superset_tot_col in filtered_daily.columns else 0
+    ly_superset_tot = filtered_daily[f"{superset_tot_col}_LY"].sum(skipna=True) if superset_tot_col and f"{superset_tot_col}_LY" in filtered_daily.columns else 0
+
+    curr_superset_share = (curr_superset_seo / curr_superset_tot * 100) if curr_superset_tot > 0 else 0
+    ly_superset_share = (ly_superset_seo / ly_superset_tot * 100) if ly_superset_tot > 0 else 0
 
     curr_seo_traffic = filtered_daily['SEO流量'].sum(skipna=True) if 'SEO流量' in filtered_daily.columns else 0
     ly_seo_traffic = filtered_daily['SEO流量_LY'].sum(skipna=True) if 'SEO流量_LY' in filtered_daily.columns else 0
@@ -496,9 +519,13 @@ try:
         with col_a:
             st.plotly_chart(create_yoy_chart(merged_df, "GA4 SEO销售额", "GA4 SEO Revenue (GA4 SEO销售额)", "Revenue ($)", freq_code, "#1f77b4"), use_container_width=True)
             st.plotly_chart(create_yoy_chart(merged_df, "GA4 网站总销售额", "Total Website Revenue (GA4 网站总销售额)", "Revenue ($)", freq_code, "#2ca02c"), use_container_width=True)
-            st.plotly_chart(create_yoy_chart(merged_df, "Superset 总销售额占比情况", "Superset Revenue Share (Superset 总销售额占比情况)", "Percentage (%)", freq_code, "#9467bd"), use_container_width=True)
+            # DYNAMISCH BEREKENDE SUPERSET SHARE
+            st.plotly_chart(create_yoy_chart(merged_df, "Superset_Share_Calculated", "Superset SEO Revenue Share (Superset SEO销售额占比)", "Percentage (%)", freq_code, "#9467bd"), use_container_width=True)
         with col_b:
             st.plotly_chart(create_yoy_chart(merged_df, "Superset SEO销售额", "Superset SEO Revenue (Superset SEO销售额)", "Revenue ($)", freq_code, "#ff7f0e"), use_container_width=True)
+            # SUPERSET TOTALE OMZET
+            if superset_tot_col:
+                st.plotly_chart(create_yoy_chart(merged_df, superset_tot_col, f"Total Superset Revenue ({superset_tot_col})", "Revenue ($)", freq_code, "#e377c2"), use_container_width=True)
             st.plotly_chart(create_yoy_chart(merged_df, "AI Assistant 销售额", "AI Assistant Revenue (AI Assistant 销售额)", "Revenue ($)", freq_code, "#d62728"), use_container_width=True)
 
     # TAB 2: TRAFFIC METRICS
