@@ -362,14 +362,13 @@ try:
     else:
         merged_df = filtered_daily.copy()
 
-    # Dynamische Superset Total Revenue detectie
+    # Superset Total Revenue identificatie
     superset_tot_col = None
     for c in ["Superset 网站总销售额", "Superset 总销售额", "Superset销售额"]:
         if c in df.columns:
             superset_tot_col = c
             break
 
-    # Fallback als de precieze naam verschilt
     if superset_tot_col is None:
         for c in df.columns:
             if "superset" in str(c).lower() and "总销售额" in str(c):
@@ -433,7 +432,7 @@ try:
     curr_superset_seo = filtered_daily['Superset SEO销售额'].sum(skipna=True) if 'Superset SEO销售额' in filtered_daily.columns else 0
     ly_superset_seo = filtered_daily['Superset SEO销售额_LY'].sum(skipna=True) if 'Superset SEO销售额_LY' in filtered_daily.columns else 0
 
-    # GEBRUIK SUPERSET TOTALE OMZET
+    # Superset totale omzet voor KPI
     curr_superset_tot = filtered_daily[superset_tot_col].sum(skipna=True) if superset_tot_col and superset_tot_col in filtered_daily.columns else 0
     ly_superset_tot = filtered_daily[f"{superset_tot_col}_LY"].sum(skipna=True) if superset_tot_col and f"{superset_tot_col}_LY" in filtered_daily.columns else 0
 
@@ -478,7 +477,7 @@ try:
         )
         st.caption(f"去年 (MTD): $ {ly_superset_seo:,.2f}")
 
-    # VERVANGEN DOOR SUPERSET TOTALE OMZET
+    # BOVENAAN: SUPERSET TOTALE OMZET
     with col3:
         diff_superset_total = curr_superset_tot - ly_superset_tot
         label_superset_title = f"Total Website Revenue ({superset_tot_col})" if superset_tot_col else "Total Website Revenue (Superset)"
@@ -519,17 +518,21 @@ try:
         "📊 SEO weekly data GSC"
     ])
 
-    # TAB 1: REVENUE METRICS
+    # TAB 1: REVENUE METRICS (BEVAT NU BEIDE TOTALE OMZET GRAFIEKEN)
     with tab1:
         col_a, col_b = st.columns(2)
         with col_a:
             st.plotly_chart(create_yoy_chart(merged_df, "GA4 SEO销售额", "GA4 SEO Revenue (GA4 SEO销售额)", "Revenue ($)", freq_code, "#1f77b4"), use_container_width=True)
-            # SUPERSET TOTALE OMZET IN PLAATS VAN GA4
+            # SUPERSET TOTALE OMZET GRAFIEK
             if superset_tot_col and superset_tot_col in merged_df.columns:
                 st.plotly_chart(create_yoy_chart(merged_df, superset_tot_col, f"Total Website Revenue ({superset_tot_col})", "Revenue ($)", freq_code, "#2ca02c"), use_container_width=True)
+            # SUPERSET REVENUE SHARE GRAFIEK
             st.plotly_chart(create_yoy_chart(merged_df, "Superset_Share_Calculated", "Superset SEO Revenue Share (Superset SEO销售额占比)", "Percentage (%)", freq_code, "#9467bd"), use_container_width=True)
         with col_b:
             st.plotly_chart(create_yoy_chart(merged_df, "Superset SEO销售额", "Superset SEO Revenue (Superset SEO销售额)", "Revenue ($)", freq_code, "#ff7f0e"), use_container_width=True)
+            # GA4 TOTALE OMZET GRAFIEK (WEER TERUGGEZET)
+            if "GA4 网站总销售额" in merged_df.columns:
+                st.plotly_chart(create_yoy_chart(merged_df, "GA4 网站总销售额", "GA4 Total Website Revenue (GA4 网站总销售额)", "Revenue ($)", freq_code, "#17becf"), use_container_width=True)
             st.plotly_chart(create_yoy_chart(merged_df, "AI Assistant 销售额", "AI Assistant Revenue (AI Assistant 销售额)", "Revenue ($)", freq_code, "#d62728"), use_container_width=True)
 
     # TAB 2: TRAFFIC METRICS
