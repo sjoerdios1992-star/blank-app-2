@@ -12,12 +12,37 @@ st.set_page_config(
     layout="wide"
 )
 
+# -------------------- CUSTOM CSS STYLING --------------------
+st.markdown("""
+<style>
+    /* Styling voor KPI containers */
+    [data-testid="stMetric"] {
+        background-color: #f8f9fa;
+        border: 1px solid #e9ecef;
+        padding: 14px 18px;
+        border-radius: 10px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+    }
+    [data-testid="stMetricLabel"] p {
+        font-size: 0.85rem !important;
+        font-weight: 600;
+        color: #495057;
+    }
+    [data-testid="stMetricValue"] div {
+        font-size: 1.45rem !important;
+        font-weight: 700;
+    }
+    .kpi-header {
+        margin-top: 5px;
+        margin-bottom: 15px;
+        font-weight: 700;
+        color: #212529;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 # -------------------- AUTHENTICATION FUNCTION --------------------
 def check_password():
-    """
-    Inlogsysteem op basis van st.session_state.
-    Controleert of gebruikersnaam 'seo' en wachtwoord 'callie' juist zijn.
-    """
     if "authenticated" not in st.session_state:
         st.session_state["authenticated"] = False
 
@@ -44,7 +69,6 @@ def check_password():
 
     return True
 
-# Stop execution if not authenticated
 if not check_password():
     st.stop()
 
@@ -54,8 +78,8 @@ if st.sidebar.button("🔒 Log out"):
     st.rerun()
 
 # -------------------- DASHBOARD TITLE --------------------
-st.title("📊 Callie NL — Performance Dashboard (Individual YoY Trends)")
-st.caption("All metrics individually compared against last year with flexible period aggregation (Day / Week / Month / Quarter / Year).")
+st.title("📊 Callie NL — Performance Dashboard")
+st.caption("Performance insights & YoY trends with granular date control (Day / Week / Month / Quarter / Year).")
 
 # -------------------- DATA URLS --------------------
 SHEET_URL_MAIN = "https://docs.google.com/spreadsheets/d/1GLAGMkVx5DMXylG0bbdvkzuqTd8IVfDANhcRrAX6LFU/edit?usp=sharing"
@@ -63,24 +87,16 @@ SHEET_URL_GSC = "https://docs.google.com/spreadsheets/d/1Qna6ZiJ3tlZzz9U2yL-qTwo
 
 # -------------------- HELPER FUNCTIONS --------------------
 def clean_number(val, is_pct=False):
-    """
-    Parses numbers, currency, and percentages into clean floats.
-    Leaves empty/future values as np.nan.
-    """
     if pd.isna(val):
         return np.nan
-    
     s_raw = str(val).strip()
     if not s_raw or s_raw.lower() in ['nan', 'none', '-', 'null', '']:
         return np.nan
 
     has_pct_symbol = '%' in s_raw
-    s = s_raw.replace('$', '').replace('€', '').replace('%', '').strip()
-
+    s = s_raw.replace('$', '').replace('€', '').replace('%', '').strip().replace(',', '')
     if not s:
         return np.nan
-
-    s = s.replace(',', '')
 
     try:
         num = float(s)
@@ -92,9 +108,6 @@ def clean_number(val, is_pct=False):
         return np.nan
 
 def parse_single_date(val):
-    """
-    Converts any date representation into a pd.Timestamp.
-    """
     if pd.isna(val):
         return pd.NaT
     if isinstance(val, (pd.Timestamp, datetime.datetime, datetime.date)):
@@ -116,17 +129,26 @@ def parse_single_date(val):
     except Exception:
         return pd.NaT
 
+def format_kpi_delta(diff, ly_val, is_currency=False, is_pct=False, is_rank=False):
+    """
+    Formatteert het verschil ten opzichte van vorig jaar.
+    """
+    if is_pct:
+        return f"{diff:+.2f}% pt vs 去年"
+    
+    pct_change = (diff / ly_val * 100) if (ly_val is not None and ly_val != 0) else 0.0
+    if is_currency:
+        return f"{diff:+,.2f} ({pct_change:+.2f}%) vs 去年"
+    elif is_rank:
+        return f"{diff:+.1f} pts vs 去年"
+    else:
+        return f"{int(diff):+,} ({pct_change:+.2f}%) vs 去年"
+
 # -------------------- LOAD SHEET 1 (MAIN DASHBOARD) --------------------
 @st.cache_data(ttl=60)
 def load_and_transform_main_data():
     conn = st.connection("gsheets", type=GSheetsConnection)
-    
-    raw_df = conn.read(
-        spreadsheet=SHEET_URL_MAIN,
-        skiprows=87,
-        nrows=19,
-        header=None
-    )
+    raw_df = conn.read(spreadsheet=SHEET_URL_MAIN, skiprows=87, nrows=19, header=None)
     
     if raw_df is None or raw_df.empty:
         return pd.DataFrame(), []
@@ -148,7 +170,6 @@ def load_and_transform_main_data():
     
     datum_col = df_transposed.columns[date_row_idx]
     df_transposed['Datum'] = df_transposed[datum_col].apply(parse_single_date)
-    
     df_transposed = df_transposed.dropna(subset=['Datum'])
     df_transposed = df_transposed[df_transposed['Datum'].dt.year >= 2020]
     
@@ -159,18 +180,16 @@ def load_and_transform_main_data():
         
     return df_transposed.sort_values('Datum'), numeric_cols
 
-# -------------------- LOAD SHEET 2 (SEO WEEKLY DATA GSC) --------------------
+# -------------------- LOAD SHEET 2 (GSC WEEKLY DATA) --------------------
 @st.cache_data(ttl=60)
 def load_gsc_weekly_data():
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
         raw_gsc = conn.read(spreadsheet=SHEET_URL_GSC)
-        
         if raw_gsc is None or raw_gsc.empty:
             return pd.DataFrame(), []
 
         df_gsc = raw_gsc.copy()
-        
         date_col_name = None
         for col in df_gsc.columns:
             if any(k in str(col).lower() for k in ['date', 'datum', 'week', '日期', '时间']):
@@ -201,12 +220,11 @@ def load_gsc_weekly_data():
                     gsc_numeric_cols.append(col)
 
         return df_gsc.sort_values('Datum'), gsc_numeric_cols
-    except Exception as e:
+    except Exception:
         return pd.DataFrame(), []
 
 def create_yoy_chart(df_merged, col, title, y_label, freq_code, color_current="#1f77b4", color_ly="#aec7e8"):
     fig = go.Figure()
-
     is_percentage = "(%)" in y_label or "Percentage" in y_label or "Share" in y_label or any(k in col for k in ['率', '占比', '%'])
     is_rank = "排名" in col or "Position" in col or "Rank" in col
     is_currency = ("($)" in y_label or "Revenue" in title) and not is_percentage
@@ -256,7 +274,7 @@ def create_yoy_chart(df_merged, col, title, y_label, freq_code, color_current="#
         hoverlabel=dict(bgcolor="white", font_size=13),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         margin=dict(l=20, r=20, t=50, b=20),
-        height=400
+        height=380
     )
 
     if freq_code == "MS":
@@ -309,7 +327,7 @@ try:
         st.sidebar.error("⚠️ Start Date cannot be after End Date.")
         start_date, end_date = end_date, start_date
 
-    # -------------------- STAP 1: DAGELIJKSE YOY MATCHING (MAIN SHEET) --------------------
+    # -------------------- YOY MATCHING MAIN SHEET --------------------
     df_daily = df.copy()
     YOY_OFFSET = pd.Timedelta(days=364)
     df_daily['Datum_Vorig_Jaar'] = df_daily['Datum'] - YOY_OFFSET
@@ -346,9 +364,7 @@ try:
 
     filtered_daily = daily_merged[(daily_merged['Datum'].dt.date >= filter_start) & (daily_merged['Datum'].dt.date <= end_date)].copy()
 
-    # -------------------- STAP 2: AGGREGATIE MAIN SHEET --------------------
     all_metrics_cols = numeric_cols + [f"{c}_LY" for c in numeric_cols if f"{c}_LY" in daily_merged.columns]
-
     agg_rules = {}
     for col in all_metrics_cols:
         col_str = str(col)
@@ -388,7 +404,7 @@ try:
             np.nan
         )
 
-    # -------------------- STAP 3: YOY MATCHING & AGGREGATIE GSC SHEET --------------------
+    # -------------------- YOY MATCHING GSC SHEET --------------------
     if not df_gsc.empty:
         df_gsc_daily = df_gsc.copy()
         df_gsc_daily['Datum_Vorig_Jaar'] = df_gsc_daily['Datum'] - YOY_OFFSET
@@ -404,7 +420,6 @@ try:
         )
 
         filtered_gsc_daily = gsc_daily_merged[(gsc_daily_merged['Datum'].dt.date >= filter_start) & (gsc_daily_merged['Datum'].dt.date <= end_date)].copy()
-
         all_gsc_cols = gsc_numeric_cols + [f"{c}_LY" for c in gsc_numeric_cols if f"{c}_LY" in gsc_daily_merged.columns]
         gsc_agg_rules = {}
         for col in all_gsc_cols:
@@ -420,97 +435,14 @@ try:
             merged_gsc_df = filtered_gsc_daily.copy()
     else:
         merged_gsc_df = pd.DataFrame()
+        filtered_gsc_daily = pd.DataFrame()
 
-    # -------------------- KPI SUMMARY WITH % COMPARISONS --------------------
+    # -------------------- PERIOD DISPLAY STRING --------------------
     start_str = start_date.strftime('%d-%m-%Y')
     end_str = end_date.strftime('%d-%m-%Y')
-    st.subheader(f"📌 Total Period Summary ({start_str} to {end_str}) — 今年 vs 去年 [{granularity}]")
+    period_title = f"({start_str} to {end_str}) — 今年 vs 去年 [{granularity}]"
 
-    curr_ga4_seo = filtered_daily['GA4 SEO销售额'].sum(skipna=True) if 'GA4 SEO销售额' in filtered_daily.columns else 0
-    ly_ga4_seo = filtered_daily['GA4 SEO销售额_LY'].sum(skipna=True) if 'GA4 SEO销售额_LY' in filtered_daily.columns else 0
-
-    curr_superset_seo = filtered_daily['Superset SEO销售额'].sum(skipna=True) if 'Superset SEO销售额' in filtered_daily.columns else 0
-    ly_superset_seo = filtered_daily['Superset SEO销售额_LY'].sum(skipna=True) if 'Superset SEO销售额_LY' in filtered_daily.columns else 0
-
-    # Superset totale omzet voor KPI
-    curr_superset_tot = filtered_daily[superset_tot_col].sum(skipna=True) if superset_tot_col and superset_tot_col in filtered_daily.columns else 0
-    ly_superset_tot = filtered_daily[f"{superset_tot_col}_LY"].sum(skipna=True) if superset_tot_col and f"{superset_tot_col}_LY" in filtered_daily.columns else 0
-
-    curr_superset_share = (curr_superset_seo / curr_superset_tot * 100) if curr_superset_tot > 0 else 0
-    ly_superset_share = (ly_superset_seo / ly_superset_tot * 100) if ly_superset_tot > 0 else 0
-
-    curr_seo_traffic = filtered_daily['SEO流量'].sum(skipna=True) if 'SEO流量' in filtered_daily.columns else 0
-    ly_seo_traffic = filtered_daily['SEO流量_LY'].sum(skipna=True) if 'SEO流量_LY' in filtered_daily.columns else 0
-
-    curr_blog_traffic = filtered_daily['SEO Blog流量'].sum(skipna=True) if 'SEO Blog流量' in filtered_daily.columns else 0
-    ly_blog_traffic = filtered_daily['SEO Blog流量_LY'].sum(skipna=True) if 'SEO Blog流量_LY' in filtered_daily.columns else 0
-
-    curr_ai_traffic = filtered_daily['AI Assistant 流量'].sum(skipna=True) if 'AI Assistant 流量' in filtered_daily.columns else 0
-    ly_ai_traffic = filtered_daily['AI Assistant 流量_LY'].sum(skipna=True) if 'AI Assistant 流量_LY' in filtered_daily.columns else 0
-
-    curr_ai_rev = filtered_daily['AI Assistant 销售额'].sum(skipna=True) if 'AI Assistant 销售额' in filtered_daily.columns else 0
-    ly_ai_rev = filtered_daily['AI Assistant 销售额_LY'].sum(skipna=True) if 'AI Assistant 销售额_LY' in filtered_daily.columns else 0
-
-    def format_kpi_delta(diff, ly_val, is_currency=False):
-        pct_change = (diff / ly_val * 100) if ly_val > 0 else 0.0
-        if is_currency:
-            return f"{diff:+,.2f} ({pct_change:+.2f}%) vs 去年"
-        else:
-            return f"{int(diff):+,} ({pct_change:+.2f}%) vs 去年"
-
-    col1, col2, col3, col4, col5 = st.columns(5)
-    with col1:
-        diff_seo_rev = curr_ga4_seo - ly_ga4_seo
-        st.metric(
-            label="GA4 SEO Revenue (GA4 SEO销售额)",
-            value=f"$ {curr_ga4_seo:,.2f}",
-            delta=format_kpi_delta(diff_seo_rev, ly_ga4_seo, is_currency=True)
-        )
-        st.caption(f"去年 (MTD): $ {ly_ga4_seo:,.2f}")
-
-    with col2:
-        diff_superset_seo = curr_superset_seo - ly_superset_seo
-        st.metric(
-            label="Superset SEO Revenue (Superset SEO销售额)",
-            value=f"$ {curr_superset_seo:,.2f}",
-            delta=format_kpi_delta(diff_superset_seo, ly_superset_seo, is_currency=True)
-        )
-        st.caption(f"去年 (MTD): $ {ly_superset_seo:,.2f}")
-
-    # BOVENAAN: SUPERSET TOTALE OMZET
-    with col3:
-        diff_superset_total = curr_superset_tot - ly_superset_tot
-        label_superset_title = f"Total Website Revenue ({superset_tot_col})" if superset_tot_col else "Total Website Revenue (Superset)"
-        st.metric(
-            label=label_superset_title,
-            value=f"$ {curr_superset_tot:,.2f}",
-            delta=format_kpi_delta(diff_superset_total, ly_superset_tot, is_currency=True)
-        )
-        st.caption(f"去年: $ {ly_superset_tot:,.2f} | Share: {curr_superset_share:.2f}% (去年: {ly_superset_share:.2f}%)")
-
-    with col4:
-        diff_seo_tr = curr_seo_traffic - ly_seo_traffic
-        st.metric(
-            label="Total SEO Traffic (SEO流量)",
-            value=f"{int(curr_seo_traffic):,}",
-            delta=format_kpi_delta(diff_seo_tr, ly_seo_traffic, is_currency=False)
-        )
-        st.caption(f"去年: {int(ly_seo_traffic):,} | Blog: {int(curr_blog_traffic):,} (去年: {int(ly_blog_traffic):,})")
-
-    with col5:
-        diff_ai_tr = curr_ai_traffic - ly_ai_traffic
-        st.metric(
-            label="AI Assistant Traffic (AI Assistant 流量)",
-            value=f"{int(curr_ai_traffic):,}",
-            delta=format_kpi_delta(diff_ai_tr, ly_ai_traffic, is_currency=False)
-        )
-        st.caption(f"去年: {int(ly_ai_traffic):,} | AI Rev: $ {curr_ai_rev:,.2f} (去年: $ {ly_ai_rev:,.2f})")
-
-    st.markdown("---")
-
-    # -------------------- INDIVIDUAL CHARTS BY TAB --------------------
-    st.subheader(f"📈 Performance Trends [{granularity}]")
-
+    # -------------------- TABS MET CONTEXTUELE SAMENVATTINGEN --------------------
     tab1, tab2, tab3, tab4 = st.tabs([
         "💰 Revenue Metrics", 
         "📈 Traffic Metrics", 
@@ -518,25 +450,106 @@ try:
         "📊 SEO weekly data GSC"
     ])
 
-    # TAB 1: REVENUE METRICS (BEVAT NU BEIDE TOTALE OMZET GRAFIEKEN)
+    # ==================== TAB 1: REVENUE METRICS ====================
     with tab1:
+        st.markdown(f"<h4 class='kpi-header'>📌 Revenue Period Summary {period_title}</h4>", unsafe_allow_html=True)
+        
+        c_ga4_seo = filtered_daily['GA4 SEO销售额'].sum(skipna=True) if 'GA4 SEO销售额' in filtered_daily.columns else 0
+        ly_ga4_seo = filtered_daily['GA4 SEO销售额_LY'].sum(skipna=True) if 'GA4 SEO销售额_LY' in filtered_daily.columns else 0
+
+        c_ss_seo = filtered_daily['Superset SEO销售额'].sum(skipna=True) if 'Superset SEO销售额' in filtered_daily.columns else 0
+        ly_ss_seo = filtered_daily['Superset SEO销售额_LY'].sum(skipna=True) if 'Superset SEO销售额_LY' in filtered_daily.columns else 0
+
+        c_ss_tot = filtered_daily[superset_tot_col].sum(skipna=True) if superset_tot_col and superset_tot_col in filtered_daily.columns else 0
+        ly_ss_tot = filtered_daily[f"{superset_tot_col}_LY"].sum(skipna=True) if superset_tot_col and f"{superset_tot_col}_LY" in filtered_daily.columns else 0
+
+        c_ga4_tot = filtered_daily['GA4 网站总销售额'].sum(skipna=True) if 'GA4 网站总销售额' in filtered_daily.columns else 0
+        ly_ga4_tot = filtered_daily['GA4 网站总销售额_LY'].sum(skipna=True) if 'GA4 网站总销售额_LY' in filtered_daily.columns else 0
+
+        c_share = (c_ss_seo / c_ss_tot * 100) if c_ss_tot > 0 else 0
+        ly_share = (ly_ss_seo / ly_ss_tot * 100) if ly_ss_tot > 0 else 0
+
+        c_ai_rev = filtered_daily['AI Assistant 销售额'].sum(skipna=True) if 'AI Assistant 销售额' in filtered_daily.columns else 0
+        ly_ai_rev = filtered_daily['AI Assistant 销售额_LY'].sum(skipna=True) if 'AI Assistant 销售额_LY' in filtered_daily.columns else 0
+
+        rk1, rk2, rk3, rk4, rk5, rk6 = st.columns(6)
+        with rk1:
+            st.metric("GA4 SEO Rev", f"${c_ga4_seo:,.2f}", format_kpi_delta(c_ga4_seo - ly_ga4_seo, ly_ga4_seo, is_currency=True))
+            st.caption(f"去年: ${ly_ga4_seo:,.2f}")
+        with rk2:
+            st.metric("Superset SEO Rev", f"${c_ss_seo:,.2f}", format_kpi_delta(c_ss_seo - ly_ss_seo, ly_ss_seo, is_currency=True))
+            st.caption(f"去年: ${ly_ss_seo:,.2f}")
+        with rk3:
+            st.metric("Superset Total Rev", f"${c_ss_tot:,.2f}", format_kpi_delta(c_ss_tot - ly_ss_tot, ly_ss_tot, is_currency=True))
+            st.caption(f"去年: ${ly_ss_tot:,.2f}")
+        with rk4:
+            st.metric("GA4 Total Rev", f"${c_ga4_tot:,.2f}", format_kpi_delta(c_ga4_tot - ly_ga4_tot, ly_ga4_tot, is_currency=True))
+            st.caption(f"去年: ${ly_ga4_tot:,.2f}")
+        with rk5:
+            st.metric("Superset Share (%)", f"{c_share:.2f}%", format_kpi_delta(c_share - ly_share, ly_share, is_pct=True))
+            st.caption(f"去年: {ly_share:.2f}%")
+        with rk6:
+            st.metric("AI Assistant Rev", f"${c_ai_rev:,.2f}", format_kpi_delta(c_ai_rev - ly_ai_rev, ly_ai_rev, is_currency=True))
+            st.caption(f"去年: ${ly_ai_rev:,.2f}")
+
+        st.markdown("---")
         col_a, col_b = st.columns(2)
         with col_a:
             st.plotly_chart(create_yoy_chart(merged_df, "GA4 SEO销售额", "GA4 SEO Revenue (GA4 SEO销售额)", "Revenue ($)", freq_code, "#1f77b4"), use_container_width=True)
-            # SUPERSET TOTALE OMZET GRAFIEK
             if superset_tot_col and superset_tot_col in merged_df.columns:
                 st.plotly_chart(create_yoy_chart(merged_df, superset_tot_col, f"Total Website Revenue ({superset_tot_col})", "Revenue ($)", freq_code, "#2ca02c"), use_container_width=True)
-            # SUPERSET REVENUE SHARE GRAFIEK
             st.plotly_chart(create_yoy_chart(merged_df, "Superset_Share_Calculated", "Superset SEO Revenue Share (Superset SEO销售额占比)", "Percentage (%)", freq_code, "#9467bd"), use_container_width=True)
         with col_b:
             st.plotly_chart(create_yoy_chart(merged_df, "Superset SEO销售额", "Superset SEO Revenue (Superset SEO销售额)", "Revenue ($)", freq_code, "#ff7f0e"), use_container_width=True)
-            # GA4 TOTALE OMZET GRAFIEK (WEER TERUGGEZET)
             if "GA4 网站总销售额" in merged_df.columns:
                 st.plotly_chart(create_yoy_chart(merged_df, "GA4 网站总销售额", "GA4 Total Website Revenue (GA4 网站总销售额)", "Revenue ($)", freq_code, "#17becf"), use_container_width=True)
             st.plotly_chart(create_yoy_chart(merged_df, "AI Assistant 销售额", "AI Assistant Revenue (AI Assistant 销售额)", "Revenue ($)", freq_code, "#d62728"), use_container_width=True)
 
-    # TAB 2: TRAFFIC METRICS
+    # ==================== TAB 2: TRAFFIC METRICS ====================
     with tab2:
+        st.markdown(f"<h4 class='kpi-header'>📌 Traffic Period Summary {period_title}</h4>", unsafe_allow_html=True)
+        
+        c_seo_tr = filtered_daily['SEO流量'].sum(skipna=True) if 'SEO流量' in filtered_daily.columns else 0
+        ly_seo_tr = filtered_daily['SEO流量_LY'].sum(skipna=True) if 'SEO流量_LY' in filtered_daily.columns else 0
+
+        c_internal_tr = filtered_daily['SEO 站内流量'].sum(skipna=True) if 'SEO 站内流量' in filtered_daily.columns else 0
+        ly_internal_tr = filtered_daily['SEO 站内流量_LY'].sum(skipna=True) if 'SEO 站内流量_LY' in filtered_daily.columns else 0
+
+        c_blog_tr = filtered_daily['SEO Blog流量'].sum(skipna=True) if 'SEO Blog流量' in filtered_daily.columns else 0
+        ly_blog_tr = filtered_daily['SEO Blog流量_LY'].sum(skipna=True) if 'SEO Blog流量_LY' in filtered_daily.columns else 0
+
+        c_tot_tr = filtered_daily['网站总流量'].sum(skipna=True) if '网站总流量' in filtered_daily.columns else 0
+        ly_tot_tr = filtered_daily['网站总流量_LY'].sum(skipna=True) if '网站总流量_LY' in filtered_daily.columns else 0
+
+        c_bounce = filtered_daily['跳出率'].mean(skipna=True) if '跳出率' in filtered_daily.columns else 0
+        ly_bounce = filtered_daily['跳出率_LY'].mean(skipna=True) if '跳出率_LY' in filtered_daily.columns else 0
+
+        c_ai_tr = filtered_daily['AI Assistant 流量'].sum(skipna=True) if 'AI Assistant 流量' in filtered_daily.columns else 0
+        ly_ai_tr = filtered_daily['AI Assistant 流量_LY'].sum(skipna=True) if 'AI Assistant 流量_LY' in filtered_daily.columns else 0
+
+        tk1, tk2, tk3, tk4, tk5, tk6 = st.columns(6)
+        with tk1:
+            st.metric("Total SEO Traffic", f"{int(c_seo_tr):,}", format_kpi_delta(c_seo_tr - ly_seo_tr, ly_seo_tr))
+            st.caption(f"去年: {int(ly_seo_tr):,}")
+        with tk2:
+            st.metric("Internal SEO Traffic", f"{int(c_internal_tr):,}", format_kpi_delta(c_internal_tr - ly_internal_tr, ly_internal_tr))
+            st.caption(f"去年: {int(ly_internal_tr):,}")
+        with tk3:
+            st.metric("Blog Traffic", f"{int(c_blog_tr):,}", format_kpi_delta(c_blog_tr - ly_blog_tr, ly_blog_tr))
+            st.caption(f"去年: {int(ly_blog_tr):,}")
+        with tk4:
+            st.metric("Total Web Traffic", f"{int(c_tot_tr):,}", format_kpi_delta(c_tot_tr - ly_tot_tr, ly_tot_tr))
+            st.caption(f"去年: {int(ly_tot_tr):,}")
+        with tk5:
+            # Bij bounce rate is een daling positief (inverse color delta via css/delta)
+            diff_bounce = c_bounce - ly_bounce
+            st.metric("Bounce Rate (Avg)", f"{c_bounce:.1f}%", f"{diff_bounce:+.1f}% pt vs 去年", delta_color="inverse")
+            st.caption(f"去年: {ly_bounce:.1f}%")
+        with tk6:
+            st.metric("AI Traffic", f"{int(c_ai_tr):,}", format_kpi_delta(c_ai_tr - ly_ai_tr, ly_ai_tr))
+            st.caption(f"去年: {int(ly_ai_tr):,}")
+
+        st.markdown("---")
         col_a, col_b = st.columns(2)
         with col_a:
             st.plotly_chart(create_yoy_chart(merged_df, "SEO流量", "Total SEO Traffic (SEO流量)", "Visitors", freq_code, "#1f77b4"), use_container_width=True)
@@ -547,8 +560,50 @@ try:
             st.plotly_chart(create_yoy_chart(merged_df, "网站总流量", "Total Website Traffic (网站总流量)", "Visitors", freq_code, "#d62728"), use_container_width=True)
             st.plotly_chart(create_yoy_chart(merged_df, "跳出率", "Bounce Rate (跳出率)", "Percentage (%)", freq_code, "#8c564b"), use_container_width=True)
 
-    # TAB 3: SEO STATUS & BACKLINKS
+    # ==================== TAB 3: SEO STATUS & BACKLINKS ====================
     with tab3:
+        st.markdown(f"<h4 class='kpi-header'>📌 SEO & Backlink Status (Latest Snapshot vs 去年)</h4>", unsafe_allow_html=True)
+        
+        # Voor status/voorraad-metrieken zoals links en indexering pakken we de meest recente waarde uit de periode
+        last_row = filtered_daily.dropna(subset=['Datum']).tail(1)
+        if not last_row.empty:
+            c_idx = last_row['收录'].values[0] if '收录' in last_row else np.nan
+            ly_idx = last_row['收录_LY'].values[0] if '收录_LY' in last_row else np.nan
+
+            c_blog_idx = last_row['Blog 收录'].values[0] if 'Blog 收录' in last_row else np.nan
+            ly_blog_idx = last_row['Blog 收录_LY'].values[0] if 'Blog 收录_LY' in last_row else np.nan
+
+            c_links = last_row['外链'].values[0] if '外链' in last_row else np.nan
+            ly_links = last_row['外链_LY'].values[0] if '外链_LY' in last_row else np.nan
+
+            c_domains = last_row['外链域名广度'].values[0] if '外链域名广度' in last_row else np.nan
+            ly_domains = last_row['外链域名广度_LY'].values[0] if '外链域名广度_LY' in last_row else np.nan
+        else:
+            c_idx = ly_idx = c_blog_idx = ly_blog_idx = c_links = ly_links = c_domains = ly_domains = np.nan
+
+        sk1, sk2, sk3, sk4 = st.columns(4)
+        with sk1:
+            val_str = f"{int(c_idx):,}" if pd.notna(c_idx) else "—"
+            delta_str = format_kpi_delta(c_idx - ly_idx, ly_idx) if pd.notna(c_idx) and pd.notna(ly_idx) else None
+            st.metric("Total Indexed Pages", val_str, delta_str)
+            st.caption(f"去年: {int(ly_idx):,}" if pd.notna(ly_idx) else "去年: —")
+        with sk2:
+            val_str = f"{int(c_blog_idx):,}" if pd.notna(c_blog_idx) else "—"
+            delta_str = format_kpi_delta(c_blog_idx - ly_blog_idx, ly_blog_idx) if pd.notna(c_blog_idx) and pd.notna(ly_blog_idx) else None
+            st.metric("Blog Indexed Pages", val_str, delta_str)
+            st.caption(f"去年: {int(ly_blog_idx):,}" if pd.notna(ly_blog_idx) else "去年: —")
+        with sk3:
+            val_str = f"{int(c_links):,}" if pd.notna(c_links) else "—"
+            delta_str = format_kpi_delta(c_links - ly_links, ly_links) if pd.notna(c_links) and pd.notna(ly_links) else None
+            st.metric("Total Backlinks", val_str, delta_str)
+            st.caption(f"去年: {int(ly_links):,}" if pd.notna(ly_links) else "去年: —")
+        with sk4:
+            val_str = f"{int(c_domains):,}" if pd.notna(c_domains) else "—"
+            delta_str = format_kpi_delta(c_domains - ly_domains, ly_domains) if pd.notna(c_domains) and pd.notna(ly_domains) else None
+            st.metric("Referring Domains", val_str, delta_str)
+            st.caption(f"去年: {int(ly_domains):,}" if pd.notna(ly_domains) else "去年: —")
+
+        st.markdown("---")
         col_a, col_b = st.columns(2)
         with col_a:
             st.plotly_chart(create_yoy_chart(merged_df, "收录", "Indexed Pages (收录)", "Pages Count", freq_code, "#1f77b4"), use_container_width=True)
@@ -557,12 +612,48 @@ try:
             st.plotly_chart(create_yoy_chart(merged_df, "Blog 收录", "Indexed Blog Pages (Blog 收录)", "Blogs Count", freq_code, "#ff7f0e"), use_container_width=True)
             st.plotly_chart(create_yoy_chart(merged_df, "外链域名广度", "Referring Domains / Breadth (外链域名广度)", "Domains Count", freq_code, "#d62728"), use_container_width=True)
 
-    # TAB 4: SEO WEEKLY DATA GSC (MET YOY VERGELIJKING)
+    # ==================== TAB 4: GSC WEEKLY DATA ====================
     with tab4:
-        st.subheader(f"🔍 Google Search Console — Performance Trends [{granularity}]")
-        if df_gsc.empty or merged_gsc_df.empty:
-            st.warning("No data found or Google Sheet access is missing. Please ensure the Service Account email is added to the GSC sheet with Viewer permissions.")
+        st.markdown(f"<h4 class='kpi-header'>📌 GSC Period Summary {period_title}</h4>", unsafe_allow_html=True)
+        
+        if df_gsc.empty or filtered_gsc_daily.empty:
+            st.warning("No GSC data available for this range.")
         else:
+            # Zoek relevante kolommen
+            clicks_col = next((c for c in gsc_numeric_cols if any(k in str(c).lower() for k in ['click', '点击'])), None)
+            impr_col = next((c for c in gsc_numeric_cols if any(k in str(c).lower() for k in ['impression', '展示'])), None)
+            ctr_col = next((c for c in gsc_numeric_cols if any(k in str(c).lower() for k in ['ctr', '点击率'])), None)
+            pos_col = next((c for c in gsc_numeric_cols if any(k in str(c).lower() for k in ['position', 'rank', '排名'])), None)
+
+            g_cols = st.columns(max(len(gsc_numeric_cols), 4))
+
+            # Helper om een samenvatting te tonen
+            for idx, col_name in enumerate(gsc_numeric_cols[:6]):
+                is_pct = any(k in str(col_name).lower() for k in ['%', 'ctr', 'rate', '率', '占比'])
+                is_pos = any(k in str(col_name).lower() for k in ['排名', 'position', 'rank'])
+                
+                c_val = filtered_gsc_daily[col_name].mean(skipna=True) if (is_pct or is_pos) else filtered_gsc_daily[col_name].sum(skipna=True)
+                ly_val = filtered_gsc_daily[f"{col_name}_LY"].mean(skipna=True) if f"{col_name}_LY" in filtered_gsc_daily.columns and (is_pct or is_pos) else (filtered_gsc_daily[f"{col_name}_LY"].sum(skipna=True) if f"{col_name}_LY" in filtered_gsc_daily.columns else 0)
+
+                with g_cols[idx % len(g_cols)]:
+                    if is_pct:
+                        v_str = f"{c_val:.2f}%"
+                        d_str = format_kpi_delta(c_val - ly_val, ly_val, is_pct=True)
+                        st.metric(str(col_name), v_str, d_str)
+                        st.caption(f"去年: {ly_val:.2f}%")
+                    elif is_pos:
+                        v_str = f"{c_val:.1f}"
+                        # Voor ranking is een lagere waarde beter (omlaag = positief)
+                        d_str = f"{(c_val - ly_val):+.1f} pts vs 去年"
+                        st.metric(str(col_name), v_str, d_str, delta_color="inverse")
+                        st.caption(f"去年: {ly_val:.1f}")
+                    else:
+                        v_str = f"{int(c_val):,}"
+                        d_str = format_kpi_delta(c_val - ly_val, ly_val)
+                        st.metric(str(col_name), v_str, d_str)
+                        st.caption(f"去年: {int(ly_val):,}")
+
+            st.markdown("---")
             if gsc_numeric_cols:
                 cols_per_row = 2
                 chart_cols = st.columns(cols_per_row)
@@ -574,13 +665,7 @@ try:
                         is_pct = any(k in str(col_name).lower() for k in ['%', 'ctr', 'rate', '率', '占比'])
                         is_pos = any(k in str(col_name).lower() for k in ['排名', 'position', 'rank'])
                         
-                        if is_pct:
-                            y_label = "Percentage (%)"
-                        elif is_pos:
-                            y_label = "Average Position"
-                        else:
-                            y_label = "Count / Total"
-
+                        y_label = "Percentage (%)" if is_pct else ("Average Position" if is_pos else "Count / Total")
                         st.plotly_chart(
                             create_yoy_chart(
                                 merged_gsc_df, 
