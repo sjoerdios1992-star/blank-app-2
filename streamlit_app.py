@@ -57,44 +57,6 @@ st.markdown("""
         margin-bottom: 15px;
         border: 1px solid #e2e8f0;
     }
-    .gsc-table {
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 0.95rem;
-        background-color: #ffffff;
-        border-radius: 8px;
-        overflow: hidden;
-        border: 1px solid #e2e8f0;
-        margin-top: 10px;
-    }
-    .gsc-table th {
-        background-color: #f1f5f9;
-        color: #1e293b;
-        font-weight: 600;
-        text-align: left;
-        padding: 12px 16px;
-        border-bottom: 2px solid #cbd5e1;
-    }
-    .gsc-table td {
-        padding: 12px 16px;
-        border-bottom: 1px solid #f1f5f9;
-        color: #334155;
-    }
-    .gsc-table tr:hover {
-        background-color: #f8fafc;
-    }
-    .val-positive {
-        color: #28a745;
-        font-weight: 600;
-    }
-    .val-negative {
-        color: #dc3545;
-        font-weight: 600;
-    }
-    .val-neutral {
-        color: #64748b;
-        font-weight: 500;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -752,7 +714,7 @@ try:
                             use_container_width=True
                         )
 
-            # -------------------- 数据概览：周期自定义对比 (DATA OVERVIEW) --------------------
+            # -------------------- 数据概览：周期自定义对比 (DATA OVERVIEW MET PANDAS STYLER) --------------------
             st.markdown("---")
             st.subheader("📋 数据概览 — 周期对比 (Data Overview)")
             st.caption("自由选择两个周期进行对比。指标位于纵轴 (Y轴)，总计/平均值与差异对比位于横轴 (X轴)。")
@@ -802,19 +764,9 @@ try:
                 col_title_a = f"周期 A ({sel_pa_start.strftime('%y/%m/%d')} - {sel_pa_end.strftime('%y/%m/%d')})"
                 col_title_b = f"周期 B ({sel_pb_start.strftime('%y/%m/%d')} - {sel_pb_end.strftime('%y/%m/%d')})"
 
-                html_table = f"""
-                <table class="gsc-table">
-                    <thead>
-                        <tr>
-                            <th>指标 (Metric)</th>
-                            <th>{col_title_a}</th>
-                            <th>{col_title_b}</th>
-                            <th>差异 (Diff: B - A)</th>
-                            <th>变化率 (% Change)</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                """
+                table_data = []
+                diff_numeric_list = []
+                is_pos_list = []
 
                 for metric in gsc_numeric_cols:
                     is_pct = any(k in str(metric).lower() for k in ['%', 'ctr', 'rate', '率', '占比'])
@@ -836,20 +788,17 @@ try:
                     if pd.notna(val_a) and pd.notna(val_b):
                         diff_val = val_b - val_a
                         if is_pct:
-                            growth_num = diff_val
                             growth_str = f"{diff_val:+.2f}% pt"
                         elif val_a != 0:
-                            growth_num = (diff_val / val_a) * 100
-                            growth_str = f"{growth_num:+.2f}%"
+                            pct_gr = (diff_val / val_a) * 100
+                            growth_str = f"{pct_gr:+.2f}%"
                         else:
-                            growth_num = 0
                             growth_str = "—"
                     else:
                         diff_val = np.nan
-                        growth_num = 0
                         growth_str = "—"
 
-                    # Formatteer getallen
+                    # Formatteer tekst
                     if is_pct:
                         str_a = f"{val_a:.2f}%" if pd.notna(val_a) else "—"
                         str_b = f"{val_b:.2f}%" if pd.notna(val_b) else "—"
@@ -863,30 +812,40 @@ try:
                         str_b = f"{int(val_b):,}" if pd.notna(val_b) else "—"
                         str_diff = f"{int(diff_val):+,}" if pd.notna(diff_val) else "—"
 
-                    # Bepaal kleurklasse
-                    # Voor ranking (排名) is omlaag beter (negatief getal = groen, positief getal = rood)
-                    if pd.isna(diff_val) or diff_val == 0:
-                        color_class = "val-neutral"
-                    elif is_pos:
-                        color_class = "val-positive" if diff_val < 0 else "val-negative"
-                    else:
-                        color_class = "val-positive" if diff_val > 0 else "val-negative"
+                    table_data.append({
+                        "指标 (Metric)": str(metric),
+                        col_title_a: str_a,
+                        col_title_b: str_b,
+                        "差异 (Diff: B - A)": str_diff,
+                        "变化率 (% Change)": growth_str
+                    })
+                    diff_numeric_list.append(diff_val)
+                    is_pos_list.append(is_pos)
 
-                    html_table += f"""
-                        <tr>
-                            <td><b>{metric}</b></td>
-                            <td>{str_a}</td>
-                            <td>{str_b}</td>
-                            <td class="{color_class}">{str_diff}</td>
-                            <td class="{color_class}">{growth_str}</td>
-                        </tr>
-                    """
+                summary_df = pd.DataFrame(table_data)
 
-                html_table += """
-                    </tbody>
-                </table>
-                """
-                st.markdown(html_table, unsafe_allow_html=True)
+                # Kleurfunctie voor de tabel via Pandas Styler
+                def style_diff_cells(data):
+                    style_df = pd.DataFrame('', index=data.index, columns=data.columns)
+                    for i in range(len(data)):
+                        diff = diff_numeric_list[i]
+                        is_rank_metric = is_pos_list[i]
+                        
+                        if pd.isna(diff) or diff == 0:
+                            color = "color: #64748b;"
+                        elif is_rank_metric:
+                            # Positie daalt in getal = verbetering = groen
+                            color = "color: #28a745; font-weight: 600;" if diff < 0 else "color: #dc3545; font-weight: 600;"
+                        else:
+                            # Andere metrieken stijgen = groen
+                            color = "color: #28a745; font-weight: 600;" if diff > 0 else "color: #dc3545; font-weight: 600;"
+                        
+                        style_df.loc[i, "差异 (Diff: B - A)"] = color
+                        style_df.loc[i, "变化率 (% Change)"] = color
+                    return style_df
+
+                styled_table = summary_df.style.apply(style_diff_cells, axis=None)
+                st.dataframe(styled_table, use_container_width=True, hide_index=True)
 
 except Exception as e:
     st.error("An error occurred while reading the Google Sheets.")
