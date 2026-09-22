@@ -15,7 +15,6 @@ st.set_page_config(
 # -------------------- CUSTOM CSS STYLING --------------------
 st.markdown("""
 <style>
-    /* Styling voor ruime, ademende KPI kaarten */
     [data-testid="stMetric"] {
         background-color: #f8f9fa;
         border: 1px solid #e9ecef;
@@ -50,6 +49,13 @@ st.markdown("""
         margin-bottom: 18px;
         font-weight: 700;
         color: #212529;
+    }
+    .period-box {
+        background-color: #f8f9fa;
+        border-radius: 8px;
+        padding: 12px 16px;
+        margin-bottom: 15px;
+        border: 1px solid #e2e8f0;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -452,7 +458,7 @@ try:
     end_str = end_date.strftime('%d-%m-%Y')
     period_title = f"({start_str} to {end_str}) — 今年 vs 去年 [{granularity}]"
 
-    # -------------------- TABS MET 2-RIJEN KPI LAYOUT --------------------
+    # -------------------- TABS --------------------
     tab1, tab2, tab3, tab4 = st.tabs([
         "💰 Revenue Metrics", 
         "📈 Traffic Metrics", 
@@ -482,7 +488,6 @@ try:
         c_ai_rev = filtered_daily['AI Assistant 销售额'].sum(skipna=True) if 'AI Assistant 销售额' in filtered_daily.columns else 0
         ly_ai_rev = filtered_daily['AI Assistant 销售额_LY'].sum(skipna=True) if 'AI Assistant 销售额_LY' in filtered_daily.columns else 0
 
-        # RIJ 1 (3 Kolommen)
         r1_c1, r1_c2, r1_c3 = st.columns(3)
         with r1_c1:
             st.metric("GA4 SEO Revenue (GA4 SEO销售额)", f"${c_ga4_seo:,.2f}", format_kpi_delta(c_ga4_seo - ly_ga4_seo, ly_ga4_seo, is_currency=True))
@@ -497,7 +502,6 @@ try:
 
         st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
 
-        # RIJ 2 (3 Kolommen)
         r2_c1, r2_c2, r2_c3 = st.columns(3)
         with r2_c1:
             st.metric("GA4 Total Revenue (GA4 网站总销售额)", f"${c_ga4_tot:,.2f}", format_kpi_delta(c_ga4_tot - ly_ga4_tot, ly_ga4_tot, is_currency=True))
@@ -544,7 +548,6 @@ try:
         c_ai_tr = filtered_daily['AI Assistant 流量'].sum(skipna=True) if 'AI Assistant 流量' in filtered_daily.columns else 0
         ly_ai_tr = filtered_daily['AI Assistant 流量_LY'].sum(skipna=True) if 'AI Assistant 流量_LY' in filtered_daily.columns else 0
 
-        # RIJ 1 (3 Kolommen)
         t1_c1, t1_c2, t1_c3 = st.columns(3)
         with t1_c1:
             st.metric("Total SEO Traffic (SEO流量)", f"{int(c_seo_tr):,}", format_kpi_delta(c_seo_tr - ly_seo_tr, ly_seo_tr))
@@ -558,7 +561,6 @@ try:
 
         st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
 
-        # RIJ 2 (3 Kolommen)
         t2_c1, t2_c2, t2_c3 = st.columns(3)
         with t2_c1:
             st.metric("Total Website Traffic (网站总流量)", f"{int(c_tot_tr):,}", format_kpi_delta(c_tot_tr - ly_tot_tr, ly_tot_tr))
@@ -602,7 +604,6 @@ try:
         else:
             c_idx = ly_idx = c_blog_idx = ly_blog_idx = c_links = ly_links = c_domains = ly_domains = np.nan
 
-        # RIJ 1 (2 Kolommen: Indexatie)
         s1_c1, s1_c2 = st.columns(2)
         with s1_c1:
             val_str = f"{int(c_idx):,}" if pd.notna(c_idx) else "—"
@@ -617,7 +618,6 @@ try:
 
         st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
 
-        # RIJ 2 (2 Kolommen: Backlinks)
         s2_c1, s2_c2 = st.columns(2)
         with s2_c1:
             val_str = f"{int(c_links):,}" if pd.notna(c_links) else "—"
@@ -646,7 +646,6 @@ try:
         if df_gsc.empty or filtered_gsc_daily.empty:
             st.warning("No GSC data available for this range.")
         else:
-            # Verdeel de beschikbare GSC metrieken over rijen van 2 of 3 kolommen
             num_metrics = len(gsc_numeric_cols)
             cols_per_row = 3 if num_metrics >= 3 else 2
             
@@ -706,8 +705,133 @@ try:
                             use_container_width=True
                         )
 
-            st.markdown("#### 📋 Data Overview")
-            st.dataframe(merged_gsc_df.sort_values('Datum', ascending=False), use_container_width=True)
+            # -------------------- NIEUWE GETRANSFOMEERDE VERGELIJKINGSTABEL (DATA OVERVIEW) --------------------
+            st.markdown("---")
+            st.subheader("📋 Data Overview — Period Comparison & Breakdown")
+            st.caption("Vergelijk twee periodes vrijelijk met elkaar. De waarden/metrieken staan op de Y-as, de berekende totalen/gemiddelden en losse weekkolommen op de X-as.")
+
+            # Datumselectie voor vergelijking
+            min_gsc_date = df_gsc['Datum'].min().date()
+            max_gsc_date = df_gsc['Datum'].max().date()
+
+            # Standaard Periode A: dashboard selectie
+            pa_start = max(start_date, min_gsc_date)
+            pa_end = min(end_date, max_gsc_date)
+
+            # Standaard Periode B: exact dezelfde periode vorig jaar (-364 dagen)
+            pb_start_calc = pa_start - pd.Timedelta(days=364)
+            pb_end_calc = pa_end - pd.Timedelta(days=364)
+            pb_start = max(pb_start_calc, min_gsc_date)
+            pb_end = min(max(pb_end_calc, min_gsc_date), max_gsc_date)
+
+            with st.container():
+                st.markdown("<div class='period-box'>", unsafe_allow_html=True)
+                p_col1, p_col2 = st.columns(2)
+                with p_col1:
+                    st.markdown("**🔵 Periode A (今年 / Basisperiode):**")
+                    pa_c1, pa_c2 = st.columns(2)
+                    with pa_c1:
+                        sel_pa_start = st.date_input("Start A:", value=pa_start, min_value=min_gsc_date, max_value=max_gsc_date, key="gsc_pa_start")
+                    with pa_c2:
+                        sel_pa_end = st.date_input("Eind A:", value=pa_end, min_value=min_gsc_date, max_value=max_gsc_date, key="gsc_pa_end")
+                with p_col2:
+                    st.markdown("**⚪ Periode B (去年 / Vergelijkingsperiode):**")
+                    pb_c1, pb_c2 = st.columns(2)
+                    with pb_c1:
+                        sel_pb_start = st.date_input("Start B:", value=pb_start, min_value=min_gsc_date, max_value=max_gsc_date, key="gsc_pb_start")
+                    with pb_c2:
+                        sel_pb_end = st.date_input("Eind B:", value=pb_end, min_value=min_gsc_date, max_value=max_gsc_date, key="gsc_pb_end")
+                st.markdown("</div>", unsafe_allow_html=True)
+
+            if sel_pa_start > sel_pa_end:
+                st.error("⚠️ Start A kan niet na Eind A liggen.")
+            elif sel_pb_start > sel_pb_end:
+                st.error("⚠️ Start B kan niet na Eind B liggen.")
+            else:
+                df_pa = df_gsc[(df_gsc['Datum'].dt.date >= sel_pa_start) & (df_gsc['Datum'].dt.date <= sel_pa_end)].sort_values('Datum')
+                df_pb = df_gsc[(df_gsc['Datum'].dt.date >= sel_pb_start) & (df_gsc['Datum'].dt.date <= sel_pb_end)].sort_values('Datum')
+
+                # Aggregatie per frequentie voor de losse kolommen van Periode A
+                if freq_code != "D" and not df_pa.empty:
+                    df_pa_breakdown = df_pa.set_index('Datum').groupby(pd.Grouper(freq=freq_code)).agg(gsc_agg_rules).reset_index()
+                else:
+                    df_pa_breakdown = df_pa.copy()
+
+                comparison_rows = []
+                for metric in gsc_numeric_cols:
+                    is_pct = any(k in str(metric).lower() for k in ['%', 'ctr', 'rate', '率', '占比'])
+                    is_pos = any(k in str(metric).lower() for k in ['排名', 'position', 'rank'])
+
+                    # Aggregatie Periode A
+                    if not df_pa.empty and metric in df_pa.columns:
+                        val_a = df_pa[metric].mean(skipna=True) if (is_pct or is_pos) else df_pa[metric].sum(skipna=True)
+                    else:
+                        val_a = np.nan
+
+                    # Aggregatie Periode B
+                    if not df_pb.empty and metric in df_pb.columns:
+                        val_b = df_pb[metric].mean(skipna=True) if (is_pct or is_pos) else df_pb[metric].sum(skipna=True)
+                    else:
+                        val_b = np.nan
+
+                    # Verschil & Groei
+                    if pd.notna(val_a) and pd.notna(val_b):
+                        diff_val = val_a - val_b
+                        if is_pct:
+                            growth_str = f"{diff_val:+.2f}% pt"
+                        elif val_b != 0:
+                            pct_gr = (diff_val / val_b) * 100
+                            growth_str = f"{pct_gr:+.2f}%"
+                        else:
+                            growth_str = "—"
+                    else:
+                        diff_val = np.nan
+                        growth_str = "—"
+
+                    # Waarden formatteren
+                    if is_pct:
+                        str_a = f"{val_a:.2f}%" if pd.notna(val_a) else "—"
+                        str_b = f"{val_b:.2f}%" if pd.notna(val_b) else "—"
+                        str_diff = f"{diff_val:+.2f}% pt" if pd.notna(diff_val) else "—"
+                    elif is_pos:
+                        str_a = f"{val_a:.1f}" if pd.notna(val_a) else "—"
+                        str_b = f"{val_b:.1f}" if pd.notna(val_b) else "—"
+                        str_diff = f"{diff_val:+.1f}" if pd.notna(diff_val) else "—"
+                    else:
+                        str_a = f"{int(val_a):,}" if pd.notna(val_a) else "—"
+                        str_b = f"{int(val_b):,}" if pd.notna(val_b) else "—"
+                        str_diff = f"{int(diff_val):+,}" if pd.notna(diff_val) else "—"
+
+                    row_dict = {
+                        "Metric (指标)": str(metric),
+                        f"Totaal Periode A ({sel_pa_start.strftime('%d/%m')} - {sel_pa_end.strftime('%d/%m/%y')})": str_a,
+                        f"Totaal Periode B ({sel_pb_start.strftime('%d/%m')} - {sel_pb_end.strftime('%d/%m/%y')})": str_b,
+                        "Verschil (Diff)": str_diff,
+                        "Groei (% Change)": growth_str
+                    }
+
+                    # Voeg de afzonderlijke week-/dagkolommen van Periode A toe
+                    if not df_pa_breakdown.empty:
+                        for _, p_row in df_pa_breakdown.iterrows():
+                            d_val = p_row['Datum']
+                            col_header = d_val.strftime('%d-%m-%Y') if pd.notna(d_val) else "Datum"
+                            val_detail = p_row[metric] if metric in p_row else np.nan
+                            
+                            if pd.isna(val_detail):
+                                formatted_detail = "—"
+                            elif is_pct:
+                                formatted_detail = f"{val_detail:.2f}%"
+                            elif is_pos:
+                                formatted_detail = f"{val_detail:.1f}"
+                            else:
+                                formatted_detail = f"{int(val_detail):,}"
+
+                            row_dict[col_header] = formatted_detail
+
+                    comparison_rows.append(row_dict)
+
+                df_comparison_table = pd.DataFrame(comparison_rows)
+                st.dataframe(df_comparison_table, use_container_width=True, hide_index=True)
 
 except Exception as e:
     st.error("An error occurred while reading the Google Sheets.")
