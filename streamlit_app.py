@@ -324,7 +324,6 @@ try:
     max_data_date = df_valid_dates['Datum'].max().date() if not df_valid_dates.empty else df['Datum'].max().date()
     min_date = df['Datum'].min().date()
 
-    # Standaard datumselectie: Vandaag - 2 dagen (eergisteren) & 30 dagen terug
     today_date = pd.Timestamp.now().date()
     target_end = today_date - pd.Timedelta(days=2)
     default_end = min(target_end, max_data_date)
@@ -380,18 +379,20 @@ try:
 
     filtered_daily = daily_merged[(daily_merged['Datum'].dt.date >= filter_start) & (daily_merged['Datum'].dt.date <= end_date)].copy()
 
-    all_metrics_cols = [c for c in filtered_daily.columns if c not in ['Datum', 'Datum_Vorig_Jaar', 'Datum_Raw', '网站要事记']]
+    # VEILIGE AGGREGATIE VOOR MAIN SHEET:
+    # Sluit expliciet alle datumkolommen en niet-numerieke velden uit van agg_rules!
     agg_rules = {}
-    for col in all_metrics_cols:
-        col_str = str(col)
-        if any(k in col_str for k in ['率', '占比', 'Share', 'Rate', '收录', '外链', '%']):
-            agg_rules[col] = 'mean'
-        else:
-            agg_rules[col] = lambda s: s.sum(min_count=1)
+    for col in filtered_daily.columns:
+        if col not in ['Datum', 'Datum_Vorig_Jaar', 'Datum_LY', 'Datum_Raw', '网站要事记']:
+            if pd.api.types.is_numeric_dtype(filtered_daily[col]):
+                col_str = str(col)
+                if any(k in col_str for k in ['率', '占比', 'Share', 'Rate', '收录', '外链', '%']):
+                    agg_rules[col] = 'mean'
+                else:
+                    agg_rules[col] = lambda s: s.sum(min_count=1)
 
     if freq_code != "D":
-        active_agg_rules = {k: v for k, v in agg_rules.items() if k in filtered_daily.columns}
-        merged_df = filtered_daily.set_index('Datum').groupby(pd.Grouper(freq=freq_code)).agg(active_agg_rules).reset_index()
+        merged_df = filtered_daily.set_index('Datum').groupby(pd.Grouper(freq=freq_code)).agg(agg_rules).reset_index()
     else:
         merged_df = filtered_daily.copy()
 
@@ -438,14 +439,17 @@ try:
 
         filtered_gsc_daily = gsc_daily_merged[(gsc_daily_merged['Datum'].dt.date >= filter_start) & (gsc_daily_merged['Datum'].dt.date <= end_date)].copy()
 
+        # VEILIGE AGGREGATIE VOOR GSC:
+        # Sluit expliciet alle datumkolommen en niet-numerieke velden uit!
         gsc_agg_rules = {}
         for col in filtered_gsc_daily.columns:
-            if col not in ['Datum', 'Datum_Vorig_Jaar']:
-                col_str = str(col)
-                if any(k in col_str.lower() for k in ['排名', 'position', 'rank', 'ctr', '率', '占比', '%']):
-                    gsc_agg_rules[col] = 'mean'
-                else:
-                    gsc_agg_rules[col] = lambda s: s.sum(min_count=1)
+            if col not in ['Datum', 'Datum_Vorig_Jaar', 'Datum_LY']:
+                if pd.api.types.is_numeric_dtype(filtered_gsc_daily[col]):
+                    col_str = str(col)
+                    if any(k in col_str.lower() for k in ['排名', 'position', 'rank', 'ctr', '率', '占比', '%']):
+                        gsc_agg_rules[col] = 'mean'
+                    else:
+                        gsc_agg_rules[col] = lambda s: s.sum(min_count=1)
 
         if freq_code != "D" and not filtered_gsc_daily.empty:
             merged_gsc_df = filtered_gsc_daily.set_index('Datum').groupby(pd.Grouper(freq=freq_code)).agg(gsc_agg_rules).reset_index()
