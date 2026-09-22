@@ -15,26 +15,39 @@ st.set_page_config(
 # -------------------- CUSTOM CSS STYLING --------------------
 st.markdown("""
 <style>
-    /* Styling voor KPI containers */
+    /* Styling voor ruime, ademende KPI kaarten */
     [data-testid="stMetric"] {
         background-color: #f8f9fa;
         border: 1px solid #e9ecef;
-        padding: 14px 18px;
+        padding: 16px 20px;
         border-radius: 10px;
         box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+        min-height: 140px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
     }
     [data-testid="stMetricLabel"] p {
-        font-size: 0.85rem !important;
+        font-size: 0.95rem !important;
         font-weight: 600;
-        color: #495057;
+        color: #343a40;
+        white-space: normal !important;
+        overflow-wrap: break-word !important;
+        line-height: 1.35 !important;
     }
     [data-testid="stMetricValue"] div {
-        font-size: 1.45rem !important;
+        font-size: 1.65rem !important;
         font-weight: 700;
+        white-space: nowrap !important;
+    }
+    [data-testid="stMetricDelta"] {
+        white-space: normal !important;
+        overflow-wrap: break-word !important;
+        font-size: 0.85rem !important;
     }
     .kpi-header {
         margin-top: 5px;
-        margin-bottom: 15px;
+        margin-bottom: 18px;
         font-weight: 700;
         color: #212529;
     }
@@ -130,9 +143,6 @@ def parse_single_date(val):
         return pd.NaT
 
 def format_kpi_delta(diff, ly_val, is_currency=False, is_pct=False, is_rank=False):
-    """
-    Formatteert het verschil ten opzichte van vorig jaar.
-    """
     if is_pct:
         return f"{diff:+.2f}% pt vs 去年"
     
@@ -442,7 +452,7 @@ try:
     end_str = end_date.strftime('%d-%m-%Y')
     period_title = f"({start_str} to {end_str}) — 今年 vs 去年 [{granularity}]"
 
-    # -------------------- TABS MET CONTEXTUELE SAMENVATTINGEN --------------------
+    # -------------------- TABS MET 2-RIJEN KPI LAYOUT --------------------
     tab1, tab2, tab3, tab4 = st.tabs([
         "💰 Revenue Metrics", 
         "📈 Traffic Metrics", 
@@ -472,24 +482,31 @@ try:
         c_ai_rev = filtered_daily['AI Assistant 销售额'].sum(skipna=True) if 'AI Assistant 销售额' in filtered_daily.columns else 0
         ly_ai_rev = filtered_daily['AI Assistant 销售额_LY'].sum(skipna=True) if 'AI Assistant 销售额_LY' in filtered_daily.columns else 0
 
-        rk1, rk2, rk3, rk4, rk5, rk6 = st.columns(6)
-        with rk1:
-            st.metric("GA4 SEO Rev", f"${c_ga4_seo:,.2f}", format_kpi_delta(c_ga4_seo - ly_ga4_seo, ly_ga4_seo, is_currency=True))
+        # RIJ 1 (3 Kolommen)
+        r1_c1, r1_c2, r1_c3 = st.columns(3)
+        with r1_c1:
+            st.metric("GA4 SEO Revenue (GA4 SEO销售额)", f"${c_ga4_seo:,.2f}", format_kpi_delta(c_ga4_seo - ly_ga4_seo, ly_ga4_seo, is_currency=True))
             st.caption(f"去年: ${ly_ga4_seo:,.2f}")
-        with rk2:
-            st.metric("Superset SEO Rev", f"${c_ss_seo:,.2f}", format_kpi_delta(c_ss_seo - ly_ss_seo, ly_ss_seo, is_currency=True))
+        with r1_c2:
+            st.metric("Superset SEO Revenue (Superset SEO销售额)", f"${c_ss_seo:,.2f}", format_kpi_delta(c_ss_seo - ly_ss_seo, ly_ss_seo, is_currency=True))
             st.caption(f"去年: ${ly_ss_seo:,.2f}")
-        with rk3:
-            st.metric("Superset Total Rev", f"${c_ss_tot:,.2f}", format_kpi_delta(c_ss_tot - ly_ss_tot, ly_ss_tot, is_currency=True))
+        with r1_c3:
+            label_ss_title = f"Total Website Revenue ({superset_tot_col})" if superset_tot_col else "Total Website Revenue (Superset 总销售额)"
+            st.metric(label_ss_title, f"${c_ss_tot:,.2f}", format_kpi_delta(c_ss_tot - ly_ss_tot, ly_ss_tot, is_currency=True))
             st.caption(f"去年: ${ly_ss_tot:,.2f}")
-        with rk4:
-            st.metric("GA4 Total Rev", f"${c_ga4_tot:,.2f}", format_kpi_delta(c_ga4_tot - ly_ga4_tot, ly_ga4_tot, is_currency=True))
+
+        st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
+
+        # RIJ 2 (3 Kolommen)
+        r2_c1, r2_c2, r2_c3 = st.columns(3)
+        with r2_c1:
+            st.metric("GA4 Total Revenue (GA4 网站总销售额)", f"${c_ga4_tot:,.2f}", format_kpi_delta(c_ga4_tot - ly_ga4_tot, ly_ga4_tot, is_currency=True))
             st.caption(f"去年: ${ly_ga4_tot:,.2f}")
-        with rk5:
-            st.metric("Superset Share (%)", f"{c_share:.2f}%", format_kpi_delta(c_share - ly_share, ly_share, is_pct=True))
+        with r2_c2:
+            st.metric("Superset SEO Share (Superset SEO销售额占比)", f"{c_share:.2f}%", format_kpi_delta(c_share - ly_share, ly_share, is_pct=True))
             st.caption(f"去年: {ly_share:.2f}%")
-        with rk6:
-            st.metric("AI Assistant Rev", f"${c_ai_rev:,.2f}", format_kpi_delta(c_ai_rev - ly_ai_rev, ly_ai_rev, is_currency=True))
+        with r2_c3:
+            st.metric("AI Assistant Revenue (AI Assistant 销售额)", f"${c_ai_rev:,.2f}", format_kpi_delta(c_ai_rev - ly_ai_rev, ly_ai_rev, is_currency=True))
             st.caption(f"去年: ${ly_ai_rev:,.2f}")
 
         st.markdown("---")
@@ -527,26 +544,31 @@ try:
         c_ai_tr = filtered_daily['AI Assistant 流量'].sum(skipna=True) if 'AI Assistant 流量' in filtered_daily.columns else 0
         ly_ai_tr = filtered_daily['AI Assistant 流量_LY'].sum(skipna=True) if 'AI Assistant 流量_LY' in filtered_daily.columns else 0
 
-        tk1, tk2, tk3, tk4, tk5, tk6 = st.columns(6)
-        with tk1:
-            st.metric("Total SEO Traffic", f"{int(c_seo_tr):,}", format_kpi_delta(c_seo_tr - ly_seo_tr, ly_seo_tr))
+        # RIJ 1 (3 Kolommen)
+        t1_c1, t1_c2, t1_c3 = st.columns(3)
+        with t1_c1:
+            st.metric("Total SEO Traffic (SEO流量)", f"{int(c_seo_tr):,}", format_kpi_delta(c_seo_tr - ly_seo_tr, ly_seo_tr))
             st.caption(f"去年: {int(ly_seo_tr):,}")
-        with tk2:
-            st.metric("Internal SEO Traffic", f"{int(c_internal_tr):,}", format_kpi_delta(c_internal_tr - ly_internal_tr, ly_internal_tr))
+        with t1_c2:
+            st.metric("Internal SEO Traffic (SEO 站内流量)", f"{int(c_internal_tr):,}", format_kpi_delta(c_internal_tr - ly_internal_tr, ly_internal_tr))
             st.caption(f"去年: {int(ly_internal_tr):,}")
-        with tk3:
-            st.metric("Blog Traffic", f"{int(c_blog_tr):,}", format_kpi_delta(c_blog_tr - ly_blog_tr, ly_blog_tr))
+        with t1_c3:
+            st.metric("Blog Traffic (SEO Blog流量)", f"{int(c_blog_tr):,}", format_kpi_delta(c_blog_tr - ly_blog_tr, ly_blog_tr))
             st.caption(f"去年: {int(ly_blog_tr):,}")
-        with tk4:
-            st.metric("Total Web Traffic", f"{int(c_tot_tr):,}", format_kpi_delta(c_tot_tr - ly_tot_tr, ly_tot_tr))
+
+        st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
+
+        # RIJ 2 (3 Kolommen)
+        t2_c1, t2_c2, t2_c3 = st.columns(3)
+        with t2_c1:
+            st.metric("Total Website Traffic (网站总流量)", f"{int(c_tot_tr):,}", format_kpi_delta(c_tot_tr - ly_tot_tr, ly_tot_tr))
             st.caption(f"去年: {int(ly_tot_tr):,}")
-        with tk5:
-            # Bij bounce rate is een daling positief (inverse color delta via css/delta)
+        with t2_c2:
             diff_bounce = c_bounce - ly_bounce
-            st.metric("Bounce Rate (Avg)", f"{c_bounce:.1f}%", f"{diff_bounce:+.1f}% pt vs 去年", delta_color="inverse")
+            st.metric("Bounce Rate (跳出率 - Avg)", f"{c_bounce:.1f}%", f"{diff_bounce:+.1f}% pt vs 去年", delta_color="inverse")
             st.caption(f"去年: {ly_bounce:.1f}%")
-        with tk6:
-            st.metric("AI Traffic", f"{int(c_ai_tr):,}", format_kpi_delta(c_ai_tr - ly_ai_tr, ly_ai_tr))
+        with t2_c3:
+            st.metric("AI Assistant Traffic (AI Assistant 流量)", f"{int(c_ai_tr):,}", format_kpi_delta(c_ai_tr - ly_ai_tr, ly_ai_tr))
             st.caption(f"去年: {int(ly_ai_tr):,}")
 
         st.markdown("---")
@@ -564,7 +586,6 @@ try:
     with tab3:
         st.markdown(f"<h4 class='kpi-header'>📌 SEO & Backlink Status (Latest Snapshot vs 去年)</h4>", unsafe_allow_html=True)
         
-        # Voor status/voorraad-metrieken zoals links en indexering pakken we de meest recente waarde uit de periode
         last_row = filtered_daily.dropna(subset=['Datum']).tail(1)
         if not last_row.empty:
             c_idx = last_row['收录'].values[0] if '收录' in last_row else np.nan
@@ -581,26 +602,32 @@ try:
         else:
             c_idx = ly_idx = c_blog_idx = ly_blog_idx = c_links = ly_links = c_domains = ly_domains = np.nan
 
-        sk1, sk2, sk3, sk4 = st.columns(4)
-        with sk1:
+        # RIJ 1 (2 Kolommen: Indexatie)
+        s1_c1, s1_c2 = st.columns(2)
+        with s1_c1:
             val_str = f"{int(c_idx):,}" if pd.notna(c_idx) else "—"
             delta_str = format_kpi_delta(c_idx - ly_idx, ly_idx) if pd.notna(c_idx) and pd.notna(ly_idx) else None
-            st.metric("Total Indexed Pages", val_str, delta_str)
+            st.metric("Total Indexed Pages (收录)", val_str, delta_str)
             st.caption(f"去年: {int(ly_idx):,}" if pd.notna(ly_idx) else "去年: —")
-        with sk2:
+        with s1_c2:
             val_str = f"{int(c_blog_idx):,}" if pd.notna(c_blog_idx) else "—"
             delta_str = format_kpi_delta(c_blog_idx - ly_blog_idx, ly_blog_idx) if pd.notna(c_blog_idx) and pd.notna(ly_blog_idx) else None
-            st.metric("Blog Indexed Pages", val_str, delta_str)
+            st.metric("Blog Indexed Pages (Blog 收录)", val_str, delta_str)
             st.caption(f"去年: {int(ly_blog_idx):,}" if pd.notna(ly_blog_idx) else "去年: —")
-        with sk3:
+
+        st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
+
+        # RIJ 2 (2 Kolommen: Backlinks)
+        s2_c1, s2_c2 = st.columns(2)
+        with s2_c1:
             val_str = f"{int(c_links):,}" if pd.notna(c_links) else "—"
             delta_str = format_kpi_delta(c_links - ly_links, ly_links) if pd.notna(c_links) and pd.notna(ly_links) else None
-            st.metric("Total Backlinks", val_str, delta_str)
+            st.metric("Total Backlinks (外链)", val_str, delta_str)
             st.caption(f"去年: {int(ly_links):,}" if pd.notna(ly_links) else "去年: —")
-        with sk4:
+        with s2_c2:
             val_str = f"{int(c_domains):,}" if pd.notna(c_domains) else "—"
             delta_str = format_kpi_delta(c_domains - ly_domains, ly_domains) if pd.notna(c_domains) and pd.notna(ly_domains) else None
-            st.metric("Referring Domains", val_str, delta_str)
+            st.metric("Referring Domains / Breadth (外链域名广度)", val_str, delta_str)
             st.caption(f"去年: {int(ly_domains):,}" if pd.notna(ly_domains) else "去年: —")
 
         st.markdown("---")
@@ -619,39 +646,39 @@ try:
         if df_gsc.empty or filtered_gsc_daily.empty:
             st.warning("No GSC data available for this range.")
         else:
-            # Zoek relevante kolommen
-            clicks_col = next((c for c in gsc_numeric_cols if any(k in str(c).lower() for k in ['click', '点击'])), None)
-            impr_col = next((c for c in gsc_numeric_cols if any(k in str(c).lower() for k in ['impression', '展示'])), None)
-            ctr_col = next((c for c in gsc_numeric_cols if any(k in str(c).lower() for k in ['ctr', '点击率'])), None)
-            pos_col = next((c for c in gsc_numeric_cols if any(k in str(c).lower() for k in ['position', 'rank', '排名'])), None)
-
-            g_cols = st.columns(max(len(gsc_numeric_cols), 4))
-
-            # Helper om een samenvatting te tonen
-            for idx, col_name in enumerate(gsc_numeric_cols[:6]):
-                is_pct = any(k in str(col_name).lower() for k in ['%', 'ctr', 'rate', '率', '占比'])
-                is_pos = any(k in str(col_name).lower() for k in ['排名', 'position', 'rank'])
+            # Verdeel de beschikbare GSC metrieken over rijen van 2 of 3 kolommen
+            num_metrics = len(gsc_numeric_cols)
+            cols_per_row = 3 if num_metrics >= 3 else 2
+            
+            for row_start in range(0, num_metrics, cols_per_row):
+                row_metrics = gsc_numeric_cols[row_start : row_start + cols_per_row]
+                row_cols = st.columns(len(row_metrics))
                 
-                c_val = filtered_gsc_daily[col_name].mean(skipna=True) if (is_pct or is_pos) else filtered_gsc_daily[col_name].sum(skipna=True)
-                ly_val = filtered_gsc_daily[f"{col_name}_LY"].mean(skipna=True) if f"{col_name}_LY" in filtered_gsc_daily.columns and (is_pct or is_pos) else (filtered_gsc_daily[f"{col_name}_LY"].sum(skipna=True) if f"{col_name}_LY" in filtered_gsc_daily.columns else 0)
+                for col_idx, col_name in enumerate(row_metrics):
+                    is_pct = any(k in str(col_name).lower() for k in ['%', 'ctr', 'rate', '率', '占比'])
+                    is_pos = any(k in str(col_name).lower() for k in ['排名', 'position', 'rank'])
+                    
+                    c_val = filtered_gsc_daily[col_name].mean(skipna=True) if (is_pct or is_pos) else filtered_gsc_daily[col_name].sum(skipna=True)
+                    ly_val = filtered_gsc_daily[f"{col_name}_LY"].mean(skipna=True) if f"{col_name}_LY" in filtered_gsc_daily.columns and (is_pct or is_pos) else (filtered_gsc_daily[f"{col_name}_LY"].sum(skipna=True) if f"{col_name}_LY" in filtered_gsc_daily.columns else 0)
 
-                with g_cols[idx % len(g_cols)]:
-                    if is_pct:
-                        v_str = f"{c_val:.2f}%"
-                        d_str = format_kpi_delta(c_val - ly_val, ly_val, is_pct=True)
-                        st.metric(str(col_name), v_str, d_str)
-                        st.caption(f"去年: {ly_val:.2f}%")
-                    elif is_pos:
-                        v_str = f"{c_val:.1f}"
-                        # Voor ranking is een lagere waarde beter (omlaag = positief)
-                        d_str = f"{(c_val - ly_val):+.1f} pts vs 去年"
-                        st.metric(str(col_name), v_str, d_str, delta_color="inverse")
-                        st.caption(f"去年: {ly_val:.1f}")
-                    else:
-                        v_str = f"{int(c_val):,}"
-                        d_str = format_kpi_delta(c_val - ly_val, ly_val)
-                        st.metric(str(col_name), v_str, d_str)
-                        st.caption(f"去年: {int(ly_val):,}")
+                    with row_cols[col_idx]:
+                        if is_pct:
+                            v_str = f"{c_val:.2f}%"
+                            d_str = format_kpi_delta(c_val - ly_val, ly_val, is_pct=True)
+                            st.metric(str(col_name), v_str, d_str)
+                            st.caption(f"去年: {ly_val:.2f}%")
+                        elif is_pos:
+                            v_str = f"{c_val:.1f}"
+                            d_str = f"{(c_val - ly_val):+.1f} pts vs 去年"
+                            st.metric(str(col_name), v_str, d_str, delta_color="inverse")
+                            st.caption(f"去年: {ly_val:.1f}")
+                        else:
+                            v_str = f"{int(c_val):,}"
+                            d_str = format_kpi_delta(c_val - ly_val, ly_val)
+                            st.metric(str(col_name), v_str, d_str)
+                            st.caption(f"去年: {int(ly_val):,}")
+                
+                st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
 
             st.markdown("---")
             if gsc_numeric_cols:
