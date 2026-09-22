@@ -53,9 +53,47 @@ st.markdown("""
     .period-box {
         background-color: #f8f9fa;
         border-radius: 8px;
-        padding: 12px 16px;
+        padding: 14px 18px;
         margin-bottom: 15px;
         border: 1px solid #e2e8f0;
+    }
+    .gsc-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.95rem;
+        background-color: #ffffff;
+        border-radius: 8px;
+        overflow: hidden;
+        border: 1px solid #e2e8f0;
+        margin-top: 10px;
+    }
+    .gsc-table th {
+        background-color: #f1f5f9;
+        color: #1e293b;
+        font-weight: 600;
+        text-align: left;
+        padding: 12px 16px;
+        border-bottom: 2px solid #cbd5e1;
+    }
+    .gsc-table td {
+        padding: 12px 16px;
+        border-bottom: 1px solid #f1f5f9;
+        color: #334155;
+    }
+    .gsc-table tr:hover {
+        background-color: #f8fafc;
+    }
+    .val-positive {
+        color: #28a745;
+        font-weight: 600;
+    }
+    .val-negative {
+        color: #dc3545;
+        font-weight: 600;
+    }
+    .val-neutral {
+        color: #64748b;
+        font-weight: 500;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -714,81 +752,104 @@ try:
                             use_container_width=True
                         )
 
-            # -------------------- COMPACTE VERGELIJKINGSTABEL (DATA OVERVIEW) --------------------
+            # -------------------- 数据概览：周期自定义对比 (DATA OVERVIEW) --------------------
             st.markdown("---")
-            st.subheader("📋 Data Overview — Period Comparison")
-            st.caption("Vergelijk twee periodes vrijelijk met elkaar. De waarden/metrieken staan op de Y-as, de totalen/gemiddelden en verschillen op de X-as.")
+            st.subheader("📋 数据概览 — 周期对比 (Data Overview)")
+            st.caption("自由选择两个周期进行对比。指标位于纵轴 (Y轴)，总计/平均值与差异对比位于横轴 (X轴)。")
 
             min_gsc_date = df_gsc['Datum'].min().date()
             max_gsc_date = df_gsc['Datum'].max().date()
 
-            pa_start = max(start_date, min_gsc_date)
-            pa_end = min(end_date, max_gsc_date)
+            # PERIODE B (LATERE PERIODE / RECENT): Dashboard selectie
+            pb_start_calc = max(start_date, min_gsc_date)
+            pb_end_calc = min(end_date, max_gsc_date)
 
-            pb_start_calc = pa_start - pd.Timedelta(days=364)
-            pb_end_calc = pa_end - pd.Timedelta(days=364)
-            pb_start = max(pb_start_calc, min_gsc_date)
-            pb_end = min(max(pb_end_calc, min_gsc_date), max_gsc_date)
+            # PERIODE A (EERDERE PERIODE / HISTORISCH): -364 dagen
+            pa_start_calc = max(pb_start_calc - pd.Timedelta(days=364), min_gsc_date)
+            pa_end_calc = min(max(pb_end_calc - pd.Timedelta(days=364), min_gsc_date), max_gsc_date)
 
             with st.container():
                 st.markdown("<div class='period-box'>", unsafe_allow_html=True)
                 p_col1, p_col2 = st.columns(2)
+                
+                # Periode A links = eerdere periode
                 with p_col1:
-                    st.markdown("**🔵 Periode A (今年 / Basisperiode):**")
+                    st.markdown("**⚪ 周期 A (对比周期 / 较早):**")
                     pa_c1, pa_c2 = st.columns(2)
                     with pa_c1:
-                        sel_pa_start = st.date_input("Start A:", value=pa_start, min_value=min_gsc_date, max_value=max_gsc_date, key="gsc_pa_start")
+                        sel_pa_start = st.date_input("开始日期 A:", value=pa_start_calc, min_value=min_gsc_date, max_value=max_gsc_date, key="gsc_pa_start")
                     with pa_c2:
-                        sel_pa_end = st.date_input("Eind A:", value=pa_end, min_value=min_gsc_date, max_value=max_gsc_date, key="gsc_pa_end")
+                        sel_pa_end = st.date_input("结束日期 A:", value=pa_end_calc, min_value=min_gsc_date, max_value=max_gsc_date, key="gsc_pa_end")
+                
+                # Periode B rechts = latere periode
                 with p_col2:
-                    st.markdown("**⚪ Periode B (去年 / Vergelijkingsperiode):**")
+                    st.markdown("**🔵 周期 B (当前周期 / 较晚):**")
                     pb_c1, pb_c2 = st.columns(2)
                     with pb_c1:
-                        sel_pb_start = st.date_input("Start B:", value=pb_start, min_value=min_gsc_date, max_value=max_gsc_date, key="gsc_pb_start")
+                        sel_pb_start = st.date_input("开始日期 B:", value=pb_start_calc, min_value=min_gsc_date, max_value=max_gsc_date, key="gsc_pb_start")
                     with pb_c2:
-                        sel_pb_end = st.date_input("Eind B:", value=pb_end, min_value=min_gsc_date, max_value=max_gsc_date, key="gsc_pb_end")
+                        sel_pb_end = st.date_input("结束日期 B:", value=pb_end_calc, min_value=min_gsc_date, max_value=max_gsc_date, key="gsc_pb_end")
                 st.markdown("</div>", unsafe_allow_html=True)
 
             if sel_pa_start > sel_pa_end:
-                st.error("⚠️ Start A kan niet na Eind A liggen.")
+                st.error("⚠️ 周期 A 的开始日期不能晚于结束日期。")
             elif sel_pb_start > sel_pb_end:
-                st.error("⚠️ Start B kan niet na Eind B liggen.")
+                st.error("⚠️ 周期 B 的开始日期不能晚于结束日期。")
             else:
                 df_pa = df_gsc[(df_gsc['Datum'].dt.date >= sel_pa_start) & (df_gsc['Datum'].dt.date <= sel_pa_end)].sort_values('Datum')
                 df_pb = df_gsc[(df_gsc['Datum'].dt.date >= sel_pb_start) & (df_gsc['Datum'].dt.date <= sel_pb_end)].sort_values('Datum')
 
-                comparison_rows = []
+                col_title_a = f"周期 A ({sel_pa_start.strftime('%y/%m/%d')} - {sel_pa_end.strftime('%y/%m/%d')})"
+                col_title_b = f"周期 B ({sel_pb_start.strftime('%y/%m/%d')} - {sel_pb_end.strftime('%y/%m/%d')})"
+
+                html_table = f"""
+                <table class="gsc-table">
+                    <thead>
+                        <tr>
+                            <th>指标 (Metric)</th>
+                            <th>{col_title_a}</th>
+                            <th>{col_title_b}</th>
+                            <th>差异 (Diff: B - A)</th>
+                            <th>变化率 (% Change)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                """
+
                 for metric in gsc_numeric_cols:
                     is_pct = any(k in str(metric).lower() for k in ['%', 'ctr', 'rate', '率', '占比'])
                     is_pos = any(k in str(metric).lower() for k in ['排名', 'position', 'rank'])
 
-                    # Aggregatie Periode A
+                    # Aggregatie Periode A (vroeger)
                     if not df_pa.empty and metric in df_pa.columns:
                         val_a = df_pa[metric].mean(skipna=True) if (is_pct or is_pos) else df_pa[metric].sum(skipna=True)
                     else:
                         val_a = np.nan
 
-                    # Aggregatie Periode B
+                    # Aggregatie Periode B (later)
                     if not df_pb.empty and metric in df_pb.columns:
                         val_b = df_pb[metric].mean(skipna=True) if (is_pct or is_pos) else df_pb[metric].sum(skipna=True)
                     else:
                         val_b = np.nan
 
-                    # Verschil & Groei
+                    # Bereken verandering van A naar B: (B - A)
                     if pd.notna(val_a) and pd.notna(val_b):
-                        diff_val = val_a - val_b
+                        diff_val = val_b - val_a
                         if is_pct:
+                            growth_num = diff_val
                             growth_str = f"{diff_val:+.2f}% pt"
-                        elif val_b != 0:
-                            pct_gr = (diff_val / val_b) * 100
-                            growth_str = f"{pct_gr:+.2f}%"
+                        elif val_a != 0:
+                            growth_num = (diff_val / val_a) * 100
+                            growth_str = f"{growth_num:+.2f}%"
                         else:
+                            growth_num = 0
                             growth_str = "—"
                     else:
                         diff_val = np.nan
+                        growth_num = 0
                         growth_str = "—"
 
-                    # Waarden formatteren
+                    # Formatteer getallen
                     if is_pct:
                         str_a = f"{val_a:.2f}%" if pd.notna(val_a) else "—"
                         str_b = f"{val_b:.2f}%" if pd.notna(val_b) else "—"
@@ -802,21 +863,30 @@ try:
                         str_b = f"{int(val_b):,}" if pd.notna(val_b) else "—"
                         str_diff = f"{int(diff_val):+,}" if pd.notna(diff_val) else "—"
 
-                    col_title_a = f"Periode A ({sel_pa_start.strftime('%d/%m')} - {sel_pa_end.strftime('%d/%m/%y')})"
-                    col_title_b = f"Periode B ({sel_pb_start.strftime('%d/%m')} - {sel_pb_end.strftime('%d/%m/%y')})"
+                    # Bepaal kleurklasse
+                    # Voor ranking (排名) is omlaag beter (negatief getal = groen, positief getal = rood)
+                    if pd.isna(diff_val) or diff_val == 0:
+                        color_class = "val-neutral"
+                    elif is_pos:
+                        color_class = "val-positive" if diff_val < 0 else "val-negative"
+                    else:
+                        color_class = "val-positive" if diff_val > 0 else "val-negative"
 
-                    row_dict = {
-                        "Metric (指标)": str(metric),
-                        col_title_a: str_a,
-                        col_title_b: str_b,
-                        "Verschil (Diff)": str_diff,
-                        "Groei (% Change)": growth_str
-                    }
+                    html_table += f"""
+                        <tr>
+                            <td><b>{metric}</b></td>
+                            <td>{str_a}</td>
+                            <td>{str_b}</td>
+                            <td class="{color_class}">{str_diff}</td>
+                            <td class="{color_class}">{growth_str}</td>
+                        </tr>
+                    """
 
-                    comparison_rows.append(row_dict)
-
-                df_comparison_table = pd.DataFrame(comparison_rows)
-                st.dataframe(df_comparison_table, use_container_width=True, hide_index=True)
+                html_table += """
+                    </tbody>
+                </table>
+                """
+                st.markdown(html_table, unsafe_allow_html=True)
 
 except Exception as e:
     st.error("An error occurred while reading the Google Sheets.")
