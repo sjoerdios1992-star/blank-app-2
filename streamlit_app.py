@@ -810,7 +810,6 @@ try:
                         str_a = f"{int(val_a):,}" if pd.notna(val_a) else "—"
                         str_b = f"{int(val_b):,}" if pd.notna(val_b) else "—"
 
-                    # Alleen 4 kolommen: Metric, Periode A, Periode B, Groei %
                     table_data.append({
                         "指标 (Metric)": str(metric),
                         col_title_a: str_a,
@@ -822,7 +821,7 @@ try:
 
                 summary_df = pd.DataFrame(table_data)
 
-                # Kleurfunctie: Zowel Periode B als % Change kleuren groen of rood
+                # Kleurfunctie: Zowel Periode B als % Change kleuren groen of rood in exact dezelfde tint
                 def style_diff_and_b_cells(data):
                     style_df = pd.DataFrame('', index=data.index, columns=data.columns)
                     for i in range(len(data)):
@@ -838,7 +837,6 @@ try:
                             # Clicks/Impr/CTR stijgen = groen
                             color = "color: #28a745; font-weight: 600;" if diff > 0 else "color: #dc3545; font-weight: 600;"
                         
-                        # Pas de kleur toe op zowel de kolom Periode B als % Change
                         style_df.loc[i, col_title_b] = color
                         style_df.loc[i, col_title_change] = color
                     return style_df
