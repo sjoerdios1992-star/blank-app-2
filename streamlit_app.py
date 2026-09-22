@@ -380,7 +380,7 @@ try:
 
     filtered_daily = daily_merged[(daily_merged['Datum'].dt.date >= filter_start) & (daily_merged['Datum'].dt.date <= end_date)].copy()
 
-    all_metrics_cols = numeric_cols + [f"{c}_LY" for c in numeric_cols if f"{c}_LY" in daily_merged.columns]
+    all_metrics_cols = [c for c in filtered_daily.columns if c not in ['Datum', 'Datum_Vorig_Jaar', 'Datum_Raw', '网站要事记']]
     agg_rules = {}
     for col in all_metrics_cols:
         col_str = str(col)
@@ -390,7 +390,8 @@ try:
             agg_rules[col] = lambda s: s.sum(min_count=1)
 
     if freq_code != "D":
-        merged_df = filtered_daily.set_index('Datum').groupby(pd.Grouper(freq=freq_code)).agg(agg_rules).reset_index()
+        active_agg_rules = {k: v for k, v in agg_rules.items() if k in filtered_daily.columns}
+        merged_df = filtered_daily.set_index('Datum').groupby(pd.Grouper(freq=freq_code)).agg(active_agg_rules).reset_index()
     else:
         merged_df = filtered_daily.copy()
 
@@ -436,16 +437,18 @@ try:
         )
 
         filtered_gsc_daily = gsc_daily_merged[(gsc_daily_merged['Datum'].dt.date >= filter_start) & (gsc_daily_merged['Datum'].dt.date <= end_date)].copy()
-        all_gsc_cols = gsc_numeric_cols + [f"{c}_LY" for c in gsc_numeric_cols if f"{c}_LY" in gsc_daily_merged.columns]
-        gsc_agg_rules = {}
-        for col in all_gsc_cols:
-            col_str = str(col)
-            if any(k in col_str.lower() for k in ['排名', 'position', 'rank', 'ctr', '率', '占比', '%']):
-                gsc_agg_rules[col] = 'mean'
-            else:
-                gsc_agg_rules[col] = lambda s: s.sum(min_count=1)
 
-        if freq_code != "D":
+        # Alleen regels opstellen voor kolommen die daadwerkelijk bestaan in filtered_gsc_daily
+        gsc_agg_rules = {}
+        for col in filtered_gsc_daily.columns:
+            if col not in ['Datum', 'Datum_Vorig_Jaar']:
+                col_str = str(col)
+                if any(k in col_str.lower() for k in ['排名', 'position', 'rank', 'ctr', '率', '占比', '%']):
+                    gsc_agg_rules[col] = 'mean'
+                else:
+                    gsc_agg_rules[col] = lambda s: s.sum(min_count=1)
+
+        if freq_code != "D" and not filtered_gsc_daily.empty:
             merged_gsc_df = filtered_gsc_daily.set_index('Datum').groupby(pd.Grouper(freq=freq_code)).agg(gsc_agg_rules).reset_index()
         else:
             merged_gsc_df = filtered_gsc_daily.copy()
@@ -658,24 +661,31 @@ try:
                     is_pos = any(k in str(col_name).lower() for k in ['排名', 'position', 'rank'])
                     
                     c_val = filtered_gsc_daily[col_name].mean(skipna=True) if (is_pct or is_pos) else filtered_gsc_daily[col_name].sum(skipna=True)
-                    ly_val = filtered_gsc_daily[f"{col_name}_LY"].mean(skipna=True) if f"{col_name}_LY" in filtered_gsc_daily.columns and (is_pct or is_pos) else (filtered_gsc_daily[f"{col_name}_LY"].sum(skipna=True) if f"{col_name}_LY" in filtered_gsc_daily.columns else 0)
+                    
+                    ly_col = f"{col_name}_LY"
+                    has_ly = ly_col in filtered_gsc_daily.columns and filtered_gsc_daily[ly_col].notna().any()
+                    
+                    if has_ly:
+                        ly_val = filtered_gsc_daily[ly_col].mean(skipna=True) if (is_pct or is_pos) else filtered_gsc_daily[ly_col].sum(skipna=True)
+                    else:
+                        ly_val = None
 
                     with row_cols[col_idx]:
                         if is_pct:
-                            v_str = f"{c_val:.2f}%"
-                            d_str = format_kpi_delta(c_val - ly_val, ly_val, is_pct=True)
+                            v_str = f"{c_val:.2f}%" if pd.notna(c_val) else "—"
+                            d_str = format_kpi_delta(c_val - ly_val, ly_val, is_pct=True) if ly_val is not None else None
                             st.metric(str(col_name), v_str, d_str)
-                            st.caption(f"去年: {ly_val:.2f}%")
+                            st.caption(f"去年: {ly_val:.2f}%" if ly_val is not None else "去年: —")
                         elif is_pos:
-                            v_str = f"{c_val:.1f}"
-                            d_str = f"{(c_val - ly_val):+.1f} pts vs 去年"
+                            v_str = f"{c_val:.1f}" if pd.notna(c_val) else "—"
+                            d_str = f"{(c_val - ly_val):+.1f} pts vs 去年" if ly_val is not None else None
                             st.metric(str(col_name), v_str, d_str, delta_color="inverse")
-                            st.caption(f"去年: {ly_val:.1f}")
+                            st.caption(f"去年: {ly_val:.1f}" if ly_val is not None else "去年: —")
                         else:
-                            v_str = f"{int(c_val):,}"
-                            d_str = format_kpi_delta(c_val - ly_val, ly_val)
+                            v_str = f"{int(c_val):,}" if pd.notna(c_val) else "—"
+                            d_str = format_kpi_delta(c_val - ly_val, ly_val) if ly_val is not None else None
                             st.metric(str(col_name), v_str, d_str)
-                            st.caption(f"去年: {int(ly_val):,}")
+                            st.caption(f"去年: {int(ly_val):,}" if ly_val is not None else "去年: —")
                 
                 st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
 
@@ -710,15 +720,12 @@ try:
             st.subheader("📋 Data Overview — Period Comparison & Breakdown")
             st.caption("Vergelijk twee periodes vrijelijk met elkaar. De waarden/metrieken staan op de Y-as, de berekende totalen/gemiddelden en losse weekkolommen op de X-as.")
 
-            # Datumselectie voor vergelijking
             min_gsc_date = df_gsc['Datum'].min().date()
             max_gsc_date = df_gsc['Datum'].max().date()
 
-            # Standaard Periode A: dashboard selectie
             pa_start = max(start_date, min_gsc_date)
             pa_end = min(end_date, max_gsc_date)
 
-            # Standaard Periode B: exact dezelfde periode vorig jaar (-364 dagen)
             pb_start_calc = pa_start - pd.Timedelta(days=364)
             pb_end_calc = pa_end - pd.Timedelta(days=364)
             pb_start = max(pb_start_calc, min_gsc_date)
@@ -751,9 +758,10 @@ try:
                 df_pa = df_gsc[(df_gsc['Datum'].dt.date >= sel_pa_start) & (df_gsc['Datum'].dt.date <= sel_pa_end)].sort_values('Datum')
                 df_pb = df_gsc[(df_gsc['Datum'].dt.date >= sel_pb_start) & (df_gsc['Datum'].dt.date <= sel_pb_end)].sort_values('Datum')
 
-                # Aggregatie per frequentie voor de losse kolommen van Periode A
+                # Aggregatie per frequentie voor de kolommen van Periode A
                 if freq_code != "D" and not df_pa.empty:
-                    df_pa_breakdown = df_pa.set_index('Datum').groupby(pd.Grouper(freq=freq_code)).agg(gsc_agg_rules).reset_index()
+                    df_pa_breakdown_rules = {k: v for k, v in gsc_agg_rules.items() if k in df_pa.columns}
+                    df_pa_breakdown = df_pa.set_index('Datum').groupby(pd.Grouper(freq=freq_code)).agg(df_pa_breakdown_rules).reset_index()
                 else:
                     df_pa_breakdown = df_pa.copy()
 
