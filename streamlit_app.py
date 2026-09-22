@@ -438,7 +438,6 @@ try:
 
         filtered_gsc_daily = gsc_daily_merged[(gsc_daily_merged['Datum'].dt.date >= filter_start) & (gsc_daily_merged['Datum'].dt.date <= end_date)].copy()
 
-        # Alleen regels opstellen voor kolommen die daadwerkelijk bestaan in filtered_gsc_daily
         gsc_agg_rules = {}
         for col in filtered_gsc_daily.columns:
             if col not in ['Datum', 'Datum_Vorig_Jaar']:
@@ -715,10 +714,10 @@ try:
                             use_container_width=True
                         )
 
-            # -------------------- NIEUWE GETRANSFOMEERDE VERGELIJKINGSTABEL (DATA OVERVIEW) --------------------
+            # -------------------- COMPACTE VERGELIJKINGSTABEL (DATA OVERVIEW) --------------------
             st.markdown("---")
-            st.subheader("📋 Data Overview — Period Comparison & Breakdown")
-            st.caption("Vergelijk twee periodes vrijelijk met elkaar. De waarden/metrieken staan op de Y-as, de berekende totalen/gemiddelden en losse weekkolommen op de X-as.")
+            st.subheader("📋 Data Overview — Period Comparison")
+            st.caption("Vergelijk twee periodes vrijelijk met elkaar. De waarden/metrieken staan op de Y-as, de totalen/gemiddelden en verschillen op de X-as.")
 
             min_gsc_date = df_gsc['Datum'].min().date()
             max_gsc_date = df_gsc['Datum'].max().date()
@@ -757,13 +756,6 @@ try:
             else:
                 df_pa = df_gsc[(df_gsc['Datum'].dt.date >= sel_pa_start) & (df_gsc['Datum'].dt.date <= sel_pa_end)].sort_values('Datum')
                 df_pb = df_gsc[(df_gsc['Datum'].dt.date >= sel_pb_start) & (df_gsc['Datum'].dt.date <= sel_pb_end)].sort_values('Datum')
-
-                # Aggregatie per frequentie voor de kolommen van Periode A
-                if freq_code != "D" and not df_pa.empty:
-                    df_pa_breakdown_rules = {k: v for k, v in gsc_agg_rules.items() if k in df_pa.columns}
-                    df_pa_breakdown = df_pa.set_index('Datum').groupby(pd.Grouper(freq=freq_code)).agg(df_pa_breakdown_rules).reset_index()
-                else:
-                    df_pa_breakdown = df_pa.copy()
 
                 comparison_rows = []
                 for metric in gsc_numeric_cols:
@@ -810,31 +802,16 @@ try:
                         str_b = f"{int(val_b):,}" if pd.notna(val_b) else "—"
                         str_diff = f"{int(diff_val):+,}" if pd.notna(diff_val) else "—"
 
+                    col_title_a = f"Periode A ({sel_pa_start.strftime('%d/%m')} - {sel_pa_end.strftime('%d/%m/%y')})"
+                    col_title_b = f"Periode B ({sel_pb_start.strftime('%d/%m')} - {sel_pb_end.strftime('%d/%m/%y')})"
+
                     row_dict = {
                         "Metric (指标)": str(metric),
-                        f"Totaal Periode A ({sel_pa_start.strftime('%d/%m')} - {sel_pa_end.strftime('%d/%m/%y')})": str_a,
-                        f"Totaal Periode B ({sel_pb_start.strftime('%d/%m')} - {sel_pb_end.strftime('%d/%m/%y')})": str_b,
+                        col_title_a: str_a,
+                        col_title_b: str_b,
                         "Verschil (Diff)": str_diff,
                         "Groei (% Change)": growth_str
                     }
-
-                    # Voeg de afzonderlijke week-/dagkolommen van Periode A toe
-                    if not df_pa_breakdown.empty:
-                        for _, p_row in df_pa_breakdown.iterrows():
-                            d_val = p_row['Datum']
-                            col_header = d_val.strftime('%d-%m-%Y') if pd.notna(d_val) else "Datum"
-                            val_detail = p_row[metric] if metric in p_row else np.nan
-                            
-                            if pd.isna(val_detail):
-                                formatted_detail = "—"
-                            elif is_pct:
-                                formatted_detail = f"{val_detail:.2f}%"
-                            elif is_pos:
-                                formatted_detail = f"{val_detail:.1f}"
-                            else:
-                                formatted_detail = f"{int(val_detail):,}"
-
-                            row_dict[col_header] = formatted_detail
 
                     comparison_rows.append(row_dict)
 
