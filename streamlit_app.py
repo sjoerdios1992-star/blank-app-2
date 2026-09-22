@@ -714,19 +714,19 @@ try:
                             use_container_width=True
                         )
 
-            # -------------------- 数据概览：周期自定义对比 (DATA OVERVIEW MET PANDAS STYLER) --------------------
+            # -------------------- 数据概览：周期自定义对比 (DATA OVERVIEW) --------------------
             st.markdown("---")
             st.subheader("📋 数据概览 — 周期对比 (Data Overview)")
-            st.caption("自由选择两个周期进行对比。指标位于纵轴 (Y轴)，总计/平均值与差异对比位于横轴 (X轴)。")
+            st.caption("自由选择两个周期进行对比。指标位于纵轴 (Y轴)，周期 A (较早) 在左，周期 B (较晚) 在右。")
 
             min_gsc_date = df_gsc['Datum'].min().date()
             max_gsc_date = df_gsc['Datum'].max().date()
 
-            # PERIODE B (LATERE PERIODE / RECENT): Dashboard selectie
+            # PERIODE B (NIEUWSTE / ACTUELE PERIODE): Dashboard selectie
             pb_start_calc = max(start_date, min_gsc_date)
             pb_end_calc = min(end_date, max_gsc_date)
 
-            # PERIODE A (EERDERE PERIODE / HISTORISCH): -364 dagen
+            # PERIODE A (OUDERE / REFERENTIE PERIODE): -364 dagen
             pa_start_calc = max(pb_start_calc - pd.Timedelta(days=364), min_gsc_date)
             pa_end_calc = min(max(pb_end_calc - pd.Timedelta(days=364), min_gsc_date), max_gsc_date)
 
@@ -734,18 +734,18 @@ try:
                 st.markdown("<div class='period-box'>", unsafe_allow_html=True)
                 p_col1, p_col2 = st.columns(2)
                 
-                # Periode A links = eerdere periode
+                # Links: Periode A (Oud)
                 with p_col1:
-                    st.markdown("**⚪ 周期 A (对比周期 / 较早):**")
+                    st.markdown("**⚪ 周期 A (较早周期 / 去年):**")
                     pa_c1, pa_c2 = st.columns(2)
                     with pa_c1:
                         sel_pa_start = st.date_input("开始日期 A:", value=pa_start_calc, min_value=min_gsc_date, max_value=max_gsc_date, key="gsc_pa_start")
                     with pa_c2:
                         sel_pa_end = st.date_input("结束日期 A:", value=pa_end_calc, min_value=min_gsc_date, max_value=max_gsc_date, key="gsc_pa_end")
                 
-                # Periode B rechts = latere periode
+                # Rechts: Periode B (Nieuw)
                 with p_col2:
-                    st.markdown("**🔵 周期 B (当前周期 / 较晚):**")
+                    st.markdown("**🔵 周期 B (较晚周期 / 今年):**")
                     pb_c1, pb_c2 = st.columns(2)
                     with pb_c1:
                         sel_pb_start = st.date_input("开始日期 B:", value=pb_start_calc, min_value=min_gsc_date, max_value=max_gsc_date, key="gsc_pb_start")
@@ -763,6 +763,7 @@ try:
 
                 col_title_a = f"周期 A ({sel_pa_start.strftime('%y/%m/%d')} - {sel_pa_end.strftime('%y/%m/%d')})"
                 col_title_b = f"周期 B ({sel_pb_start.strftime('%y/%m/%d')} - {sel_pb_end.strftime('%y/%m/%d')})"
+                col_title_change = "变化率 (% Change)"
 
                 table_data = []
                 diff_numeric_list = []
@@ -772,13 +773,13 @@ try:
                     is_pct = any(k in str(metric).lower() for k in ['%', 'ctr', 'rate', '率', '占比'])
                     is_pos = any(k in str(metric).lower() for k in ['排名', 'position', 'rank'])
 
-                    # Aggregatie Periode A (vroeger)
+                    # Aggregatie Periode A (oud)
                     if not df_pa.empty and metric in df_pa.columns:
                         val_a = df_pa[metric].mean(skipna=True) if (is_pct or is_pos) else df_pa[metric].sum(skipna=True)
                     else:
                         val_a = np.nan
 
-                    # Aggregatie Periode B (later)
+                    # Aggregatie Periode B (nieuw)
                     if not df_pb.empty and metric in df_pb.columns:
                         val_b = df_pb[metric].mean(skipna=True) if (is_pct or is_pos) else df_pb[metric].sum(skipna=True)
                     else:
@@ -798,34 +799,31 @@ try:
                         diff_val = np.nan
                         growth_str = "—"
 
-                    # Formatteer tekst
+                    # Formatteer weergavetekst
                     if is_pct:
                         str_a = f"{val_a:.2f}%" if pd.notna(val_a) else "—"
                         str_b = f"{val_b:.2f}%" if pd.notna(val_b) else "—"
-                        str_diff = f"{diff_val:+.2f}% pt" if pd.notna(diff_val) else "—"
                     elif is_pos:
                         str_a = f"{val_a:.1f}" if pd.notna(val_a) else "—"
                         str_b = f"{val_b:.1f}" if pd.notna(val_b) else "—"
-                        str_diff = f"{diff_val:+.1f}" if pd.notna(diff_val) else "—"
                     else:
                         str_a = f"{int(val_a):,}" if pd.notna(val_a) else "—"
                         str_b = f"{int(val_b):,}" if pd.notna(val_b) else "—"
-                        str_diff = f"{int(diff_val):+,}" if pd.notna(diff_val) else "—"
 
+                    # Alleen 4 kolommen: Metric, Periode A, Periode B, Groei %
                     table_data.append({
                         "指标 (Metric)": str(metric),
                         col_title_a: str_a,
                         col_title_b: str_b,
-                        "差异 (Diff: B - A)": str_diff,
-                        "变化率 (% Change)": growth_str
+                        col_title_change: growth_str
                     })
                     diff_numeric_list.append(diff_val)
                     is_pos_list.append(is_pos)
 
                 summary_df = pd.DataFrame(table_data)
 
-                # Kleurfunctie voor de tabel via Pandas Styler
-                def style_diff_cells(data):
+                # Kleurfunctie: Zowel Periode B als % Change kleuren groen of rood
+                def style_diff_and_b_cells(data):
                     style_df = pd.DataFrame('', index=data.index, columns=data.columns)
                     for i in range(len(data)):
                         diff = diff_numeric_list[i]
@@ -837,14 +835,15 @@ try:
                             # Positie daalt in getal = verbetering = groen
                             color = "color: #28a745; font-weight: 600;" if diff < 0 else "color: #dc3545; font-weight: 600;"
                         else:
-                            # Andere metrieken stijgen = groen
+                            # Clicks/Impr/CTR stijgen = groen
                             color = "color: #28a745; font-weight: 600;" if diff > 0 else "color: #dc3545; font-weight: 600;"
                         
-                        style_df.loc[i, "差异 (Diff: B - A)"] = color
-                        style_df.loc[i, "变化率 (% Change)"] = color
+                        # Pas de kleur toe op zowel de kolom Periode B als % Change
+                        style_df.loc[i, col_title_b] = color
+                        style_df.loc[i, col_title_change] = color
                     return style_df
 
-                styled_table = summary_df.style.apply(style_diff_cells, axis=None)
+                styled_table = summary_df.style.apply(style_diff_and_b_cells, axis=None)
                 st.dataframe(styled_table, use_container_width=True, hide_index=True)
 
 except Exception as e:
