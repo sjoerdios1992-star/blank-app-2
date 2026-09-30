@@ -265,12 +265,12 @@ def load_nl_vs_total_data():
                 if "站点roi" in c_str.lower() or idx == 3:  # Kolom D
                     if 'ROI' not in col_map:
                         col_map['ROI'] = col
-                elif ("含税" in c_str and "不含" not in c_str) or idx == 6:  # Kolom G
+                elif ("含税" in c_str and "不含" not in c_str) or idx == 6:  # Kolom G: Marge % (Gross Margin)
                     if 'GrossMargin_Tax' not in col_map:
                         col_map['GrossMargin_Tax'] = col
-                elif "不含税" in c_str or "不含" in c_str or idx == 7:  # Kolom H
-                    if 'GrossMargin_NoTax' not in col_map:
-                        col_map['GrossMargin_NoTax'] = col
+                elif "不含税" in c_str or "不含" in c_str or idx == 7:  # Kolom H: Winst $ (Gross Profit)
+                    if 'GrossProfit_NoTax' not in col_map:
+                        col_map['GrossProfit_NoTax'] = col
                 elif "fb来源占比" in c_str.lower() or ("fb" in c_str.lower() and "占比" in c_str) or idx == 23:  # Kolom X
                     if 'FB_Share' not in col_map:
                         col_map['FB_Share'] = col
@@ -284,7 +284,11 @@ def load_nl_vs_total_data():
             df_clean = pd.DataFrame()
             df_clean['Datum'] = df['Datum']
             for standard_name, original_col in col_map.items():
-                is_pct = any(k in str(original_col) for k in ['率', '占比', '%'])
+                # GrossProfit_NoTax is een geldbedrag ($), geen percentage!
+                if standard_name == 'GrossProfit_NoTax':
+                    is_pct = False
+                else:
+                    is_pct = any(k in str(original_col) for k in ['率', '占比', '%'])
                 df_clean[standard_name] = df[original_col].apply(lambda v: clean_number(v, is_pct=is_pct))
 
             return df_clean
@@ -747,7 +751,7 @@ try:
             val_str = f"{int(c_links):,}" if pd.notna(c_links) else "—"
             delta_str = format_kpi_delta(c_links - ly_links, ly_links) if pd.notna(c_links) and pd.notna(ly_links) else None
             st.metric("Total Backlinks (外链)", val_str, delta_str)
-            st.caption(f"去年: {int(ly_links):,}" if pd.notna(ly_links) else "去年: —")
+            st.caption(f"去年: {int(ly_links):,}" if pd.notna(ly_links) else "举行: —")
         with s2_c2:
             val_str = f"{int(c_domains):,}" if pd.notna(c_domains) else "—"
             delta_str = format_kpi_delta(c_domains - ly_domains, ly_domains) if pd.notna(c_domains) and pd.notna(ly_domains) else None
@@ -872,7 +876,7 @@ try:
                 st.markdown("</div>", unsafe_allow_html=True)
 
             if sel_pa_start > sel_pa_end:
-                st.error("⚠️️ 周期 A 的开始日期不能晚于结束日期。")
+                st.error("⚠️ 周期 A 的开始日期不能晚于结束日期。")
             elif sel_pb_start > sel_pb_end:
                 st.error("⚠️ 周期 B 的开始日期不能晚于结束日期。")
             else:
@@ -958,7 +962,7 @@ try:
     # ==================== TAB 5: NL VS TOTAL COMPARISON ====================
     with tab5:
         st.subheader("🇳🇱 Dutch Website (NL) vs 🌐 Total Website (Global) Comparison")
-        st.caption("Vergelijk de prestaties van Callie NL direct met Callie Total over tijd. De rechter Y-as toont de relatieve verhouding (NL / Total %).")
+        st.caption("Vergelijk de prestaties van Callie NL direct met Callie Total over tijd. De rechter Y-as toont het relatieve aandeel of verhouding (NL / Total %).")
 
         if df_comparison.empty:
             st.warning("⚠️ Geen gegevens gevonden in tabbladen 'Total website all data' of 'Dutch website all data'. Controleer of de namen exact overeenkomen in Google Sheets.")
@@ -969,7 +973,14 @@ try:
             ].copy()
 
             if freq_code != "D" and not filtered_comp.empty:
-                comp_rules = {c: 'mean' for c in filtered_comp.columns if c != 'Datum'}
+                comp_rules = {}
+                for c in filtered_comp.columns:
+                    if c != 'Datum':
+                        # GrossProfit_NoTax optellen bij aggregatie, ratio's en marges middelen
+                        if 'GrossProfit' in c:
+                            comp_rules[c] = lambda s: s.sum(min_count=1)
+                        else:
+                            comp_rules[c] = 'mean'
                 plot_comp = filtered_comp.set_index('Datum').groupby(pd.Grouper(freq=freq_code)).agg(comp_rules).reset_index()
             else:
                 plot_comp = filtered_comp.copy()
@@ -984,8 +995,9 @@ try:
                     create_comparison_3line_chart(plot_comp, "GrossMargin_Tax", "毛利率（含税）(Gross Margin Incl. Tax)", "Margin (%)", is_percentage=True),
                     use_container_width=True
                 )
+                # AANGEPAST NAAR GROSS PROFIT (GELDBEDRAG IN PLAATS VAN MARGE)
                 st.plotly_chart(
-                    create_comparison_3line_chart(plot_comp, "GrossMargin_NoTax", "毛利率(不含税) (Gross Margin Excl. Tax)", "Margin (%)", is_percentage=True),
+                    create_comparison_3line_chart(plot_comp, "GrossProfit_NoTax", "毛利(不含税) (Gross Profit Excl. Tax)", "Gross Profit ($)", is_currency=True),
                     use_container_width=True
                 )
 
