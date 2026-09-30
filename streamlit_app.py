@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import datetime
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from streamlit_gsheets import GSheetsConnection
 
 # -------------------- PAGE CONFIGURATION --------------------
@@ -239,6 +240,67 @@ def load_gsc_weekly_data():
     except Exception:
         return pd.DataFrame(), []
 
+# -------------------- LOAD SHEET 3 (NL VS TOTAL COMPARISON TABS) --------------------
+@st.cache_data(ttl=60)
+def load_nl_vs_total_data():
+    """
+    Leest de tabbladen 'Total website all data' en 'Dutch website all data' in.
+    Data start op rij 3 (header op rij 2).
+    """
+    try:
+        conn = st.connection("gsheets", type=GSheetsConnection)
+        
+        # Inlezen met header=1 (rij 2 is header, rij 3 is data)
+        df_tot_raw = conn.read(spreadsheet=SHEET_URL_GSC, worksheet="Total website all data", header=1)
+        df_nl_raw = conn.read(spreadsheet=SHEET_URL_GSC, worksheet="Dutch website all data", header=1)
+
+        def process_tab(df_in):
+            if df_in is None or df_in.empty:
+                return pd.DataFrame()
+            df = df_in.copy()
+            
+            # Kolom A is de datum
+            date_col = df.columns[0]
+            df['Datum'] = df[date_col].apply(parse_single_date)
+            df = df.dropna(subset=['Datum']).sort_values('Datum')
+
+            # Zoek relevante kolommen
+            col_map = {}
+            for col in df.columns:
+                c_str = str(col).strip()
+                if "站点roi" in c_str.lower():
+                    col_map['ROI'] = col
+                elif "含税" in c_str and "毛利率" in c_str:
+                    col_map['GrossMargin_Tax'] = col
+                elif ("不含税" in c_str or "不含" in c_str) and "毛利率" in c_str:
+                    col_map['GrossMargin_NoTax'] = col
+                elif "fb来源占比" in c_str.lower() or ("fb" in c_str.lower() and "占比" in c_str):
+                    col_map['FB_Share'] = col
+                elif "fb归因roi" in c_str.lower() or ("fb" in c_str.lower() and "roi" in c_str.lower() and "归因" in c_str):
+                    col_map['FB_Attributed_ROI'] = col
+                elif "cpm" in c_str.lower():
+                    col_map['FB_CPM'] = col
+
+            df_clean = pd.DataFrame()
+            df_clean['Datum'] = df['Datum']
+            for standard_name, original_col in col_map.items():
+                is_pct = any(k in original_col for k in ['率', '占比', '%'])
+                df_clean[standard_name] = df[original_col].apply(lambda v: clean_number(v, is_pct=is_pct))
+
+            return df_clean
+
+        clean_tot = process_tab(df_tot_raw)
+        clean_nl = process_tab(df_nl_raw)
+
+        if clean_tot.empty or clean_nl.empty:
+            return pd.DataFrame()
+
+        # Merge op Datum
+        df_comp = pd.merge(clean_nl, clean_tot, on='Datum', suffixes=('_NL', '_Total'), how='outer').sort_values('Datum')
+        return df_comp
+    except Exception as e:
+        return pd.DataFrame()
+
 def create_yoy_chart(df_merged, col, title, y_label, freq_code, color_current="#1f77b4", color_ly="#aec7e8"):
     fig = go.Figure()
     is_percentage = "(%)" in y_label or "Percentage" in y_label or "Share" in y_label or any(k in col for k in ['率', '占比', '%'])
@@ -304,9 +366,80 @@ def create_yoy_chart(df_merged, col, title, y_label, freq_code, color_current="#
     
     return fig
 
+def create_comparison_3line_chart(df_in, metric_base, title, y_label, is_percentage=False, is_currency=False):
+    """
+    Maakt een grafiek met 3 lijnen en secundaire Y-as:
+    - Lijn 1: Dutch Website (NL) op linker Y-as
+    - Lijn 2: Total Website (Global) op linker Y-as
+    - Lijn 3: Ratio (NL / Total) op rechter Y-as
+    """
+    col_nl = f"{metric_base}_NL"
+    col_tot = f"{metric_base}_Total"
+
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+    if is_percentage:
+        hover_main = "%{y:.2f}%"
+    elif is_currency:
+        hover_main = "$%{y:,.2f}"
+    else:
+        hover_main = "%{y:.2f}"
+
+    # Lijn 1: Dutch Website (NL)
+    if col_nl in df_in.columns:
+        s_nl = df_in.dropna(subset=[col_nl])
+        fig.add_trace(go.Scatter(
+            x=s_nl['Datum'],
+            y=s_nl[col_nl],
+            name="Dutch Website (NL)",
+            mode="lines+markers",
+            line=dict(color="#1f77b4", width=3),
+            hovertemplate=hover_main
+        ), secondary_y=False)
+
+    # Lijn 2: Total Website (Global)
+    if col_tot in df_in.columns:
+        s_tot = df_in.dropna(subset=[col_tot])
+        fig.add_trace(go.Scatter(
+            x=s_tot['Datum'],
+            y=s_tot[col_tot],
+            name="Total Website (Global)",
+            mode="lines+markers",
+            line=dict(color="#ff7f0e", width=2, dash='dash'),
+            hovertemplate=hover_main
+        ), secondary_y=False)
+
+    # Lijn 3: Ratio (NL / Total)
+    if col_nl in df_in.columns and col_tot in df_in.columns:
+        s_ratio = df_in.dropna(subset=[col_nl, col_tot]).copy()
+        s_ratio = s_ratio[s_ratio[col_tot] != 0]
+        s_ratio['Ratio'] = (s_ratio[col_nl] / s_ratio[col_tot]) * 100
+
+        fig.add_trace(go.Scatter(
+            x=s_ratio['Datum'],
+            y=s_ratio['Ratio'],
+            name="Ratio (NL / Total %)",
+            mode="lines+markers",
+            line=dict(color="#2ca02c", width=2, dash='dot'),
+            hovertemplate="%{y:.2f}%"
+        ), secondary_y=True)
+
+    fig.update_layout(
+        title=title,
+        hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        margin=dict(l=20, r=20, t=50, b=20),
+        height=400
+    )
+    fig.update_yaxes(title_text=y_label, secondary_y=False, rangemode="tozero")
+    fig.update_yaxes(title_text="Ratio (NL vs Total %)", secondary_y=True, ticksuffix="%")
+
+    return fig
+
 try:
     df, numeric_cols = load_and_transform_main_data()
     df_gsc, gsc_numeric_cols = load_gsc_weekly_data()
+    df_comparison = load_nl_vs_total_data()
 
     if df.empty:
         st.error("No valid date rows found in the main sheet.")
@@ -379,8 +512,6 @@ try:
 
     filtered_daily = daily_merged[(daily_merged['Datum'].dt.date >= filter_start) & (daily_merged['Datum'].dt.date <= end_date)].copy()
 
-    # VEILIGE AGGREGATIE VOOR MAIN SHEET:
-    # Sluit expliciet alle datumkolommen en niet-numerieke velden uit van agg_rules!
     agg_rules = {}
     for col in filtered_daily.columns:
         if col not in ['Datum', 'Datum_Vorig_Jaar', 'Datum_LY', 'Datum_Raw', '网站要事记']:
@@ -439,8 +570,6 @@ try:
 
         filtered_gsc_daily = gsc_daily_merged[(gsc_daily_merged['Datum'].dt.date >= filter_start) & (gsc_daily_merged['Datum'].dt.date <= end_date)].copy()
 
-        # VEILIGE AGGREGATIE VOOR GSC:
-        # Sluit expliciet alle datumkolommen en niet-numerieke velden uit!
         gsc_agg_rules = {}
         for col in filtered_gsc_daily.columns:
             if col not in ['Datum', 'Datum_Vorig_Jaar', 'Datum_LY']:
@@ -464,12 +593,13 @@ try:
     end_str = end_date.strftime('%d-%m-%Y')
     period_title = f"({start_str} to {end_str}) — 今年 vs 去年 [{granularity}]"
 
-    # -------------------- TABS --------------------
-    tab1, tab2, tab3, tab4 = st.tabs([
+    # -------------------- TABS MET TAB 5 TOEGEVOEGD --------------------
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "💰 Revenue Metrics", 
         "📈 Traffic Metrics", 
         "🔍 SEO & Backlink Status",
-        "📊 SEO weekly data GSC"
+        "📊 SEO weekly data GSC",
+        "🇳🇱 NL vs 🌐 Total Website Comparison"
     ])
 
     # ==================== TAB 1: REVENUE METRICS ====================
@@ -726,11 +856,9 @@ try:
             min_gsc_date = df_gsc['Datum'].min().date()
             max_gsc_date = df_gsc['Datum'].max().date()
 
-            # PERIODE B (NIEUWSTE / ACTUELE PERIODE): Dashboard selectie
             pb_start_calc = max(start_date, min_gsc_date)
             pb_end_calc = min(end_date, max_gsc_date)
 
-            # PERIODE A (OUDERE / REFERENTIE PERIODE): -364 dagen
             pa_start_calc = max(pb_start_calc - pd.Timedelta(days=364), min_gsc_date)
             pa_end_calc = min(max(pb_end_calc - pd.Timedelta(days=364), min_gsc_date), max_gsc_date)
 
@@ -738,7 +866,6 @@ try:
                 st.markdown("<div class='period-box'>", unsafe_allow_html=True)
                 p_col1, p_col2 = st.columns(2)
                 
-                # Links: Periode A (Oud)
                 with p_col1:
                     st.markdown("**⚪ 周期 A (较早周期 / 去年):**")
                     pa_c1, pa_c2 = st.columns(2)
@@ -747,7 +874,6 @@ try:
                     with pa_c2:
                         sel_pa_end = st.date_input("结束日期 A:", value=pa_end_calc, min_value=min_gsc_date, max_value=max_gsc_date, key="gsc_pa_end")
                 
-                # Rechts: Periode B (Nieuw)
                 with p_col2:
                     st.markdown("**🔵 周期 B (较晚周期 / 今年):**")
                     pb_c1, pb_c2 = st.columns(2)
@@ -777,19 +903,16 @@ try:
                     is_pct = any(k in str(metric).lower() for k in ['%', 'ctr', 'rate', '率', '占比'])
                     is_pos = any(k in str(metric).lower() for k in ['排名', 'position', 'rank'])
 
-                    # Aggregatie Periode A (oud)
                     if not df_pa.empty and metric in df_pa.columns:
                         val_a = df_pa[metric].mean(skipna=True) if (is_pct or is_pos) else df_pa[metric].sum(skipna=True)
                     else:
                         val_a = np.nan
 
-                    # Aggregatie Periode B (nieuw)
                     if not df_pb.empty and metric in df_pb.columns:
                         val_b = df_pb[metric].mean(skipna=True) if (is_pct or is_pos) else df_pb[metric].sum(skipna=True)
                     else:
                         val_b = np.nan
 
-                    # Bereken verandering van A naar B: (B - A)
                     if pd.notna(val_a) and pd.notna(val_b):
                         diff_val = val_b - val_a
                         if is_pct:
@@ -803,7 +926,6 @@ try:
                         diff_val = np.nan
                         growth_str = "—"
 
-                    # Formatteer weergavetekst
                     if is_pct:
                         str_a = f"{val_a:.2f}%" if pd.notna(val_a) else "—"
                         str_b = f"{val_b:.2f}%" if pd.notna(val_b) else "—"
@@ -825,7 +947,6 @@ try:
 
                 summary_df = pd.DataFrame(table_data)
 
-                # Kleurfunctie: Zowel Periode B als % Change kleuren groen of rood in exact dezelfde tint
                 def style_diff_and_b_cells(data):
                     style_df = pd.DataFrame('', index=data.index, columns=data.columns)
                     for i in range(len(data)):
@@ -835,10 +956,8 @@ try:
                         if pd.isna(diff) or diff == 0:
                             color = "color: #64748b;"
                         elif is_rank_metric:
-                            # Positie daalt in getal = verbetering = groen
                             color = "color: #28a745; font-weight: 600;" if diff < 0 else "color: #dc3545; font-weight: 600;"
                         else:
-                            # Clicks/Impr/CTR stijgen = groen
                             color = "color: #28a745; font-weight: 600;" if diff > 0 else "color: #dc3545; font-weight: 600;"
                         
                         style_df.loc[i, col_title_b] = color
@@ -847,6 +966,59 @@ try:
 
                 styled_table = summary_df.style.apply(style_diff_and_b_cells, axis=None)
                 st.dataframe(styled_table, use_container_width=True, hide_index=True)
+
+    # ==================== TAB 5: NL VS TOTAL COMPARISON ====================
+    with tab5:
+        st.subheader("🇳🇱 Dutch Website (NL) vs 🌐 Total Website (Global) Comparison")
+        st.caption("Vergelijk de prestaties van Callie NL direct met Callie Total over tijd. De rechter Y-as toont de relatieve verhouding (NL / Total %).")
+
+        if df_comparison.empty:
+            st.warning("⚠️ Geen gegevens gevonden in tabbladen 'Total website all data' of 'Dutch website all data'. Controleer of de namen exact overeenkomen in Google Sheets.")
+        else:
+            # Filter op geselecteerde datums uit de sidebar
+            filtered_comp = df_comparison[
+                (df_comparison['Datum'].dt.date >= filter_start) & 
+                (df_comparison['Datum'].dt.date <= end_date)
+            ].copy()
+
+            # Aggregatie per gekozen frequentie (Day / Week / Month / etc.)
+            if freq_code != "D" and not filtered_comp.empty:
+                comp_rules = {c: 'mean' for c in filtered_comp.columns if c != 'Datum'}
+                plot_comp = filtered_comp.set_index('Datum').groupby(pd.Grouper(freq=freq_code)).agg(comp_rules).reset_index()
+            else:
+                plot_comp = filtered_comp.copy()
+
+            c1, c2 = st.columns(2)
+            with c1:
+                st.plotly_chart(
+                    create_comparison_3line_chart(plot_comp, "ROI", "站点ROI (Site ROI: NL vs Total)", "ROI Factor"),
+                    use_container_width=True
+                )
+                st.plotly_chart(
+                    create_comparison_3line_chart(plot_comp, "GrossMargin_Tax", "毛利率（含税）(Gross Margin Incl. Tax)", "Margin (%)", is_percentage=True),
+                    use_container_width=True
+                )
+                st.plotly_chart(
+                    create_comparison_3line_chart(plot_comp, "GrossMargin_NoTax", "毛利率(不含税) (Gross Margin Excl. Tax)", "Margin (%)", is_percentage=True),
+                    use_container_width=True
+                )
+
+            with c2:
+                st.plotly_chart(
+                    create_comparison_3line_chart(plot_comp, "FB_Share", "FB来源占比 (FB Traffic/Revenue Share)", "Share (%)", is_percentage=True),
+                    use_container_width=True
+                )
+                st.plotly_chart(
+                    create_comparison_3line_chart(plot_comp, "FB_Attributed_ROI", "FB归因ROI (FB Attributed ROI)", "ROI Factor"),
+                    use_container_width=True
+                )
+                st.plotly_chart(
+                    create_comparison_3line_chart(plot_comp, "FB_CPM", "FB-CPM (Facebook CPM)", "CPM ($)", is_currency=True),
+                    use_container_width=True
+                )
+
+            st.markdown("#### 📋 Gecombineerde Vergelijkingstabel (Data Table)")
+            st.dataframe(plot_comp.sort_values('Datum', ascending=False), use_container_width=True)
 
 except Exception as e:
     st.error("An error occurred while reading the Google Sheets.")
