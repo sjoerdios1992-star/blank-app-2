@@ -243,14 +243,8 @@ def load_gsc_weekly_data():
 # -------------------- LOAD SHEET 3 (NL VS TOTAL COMPARISON TABS) --------------------
 @st.cache_data(ttl=60)
 def load_nl_vs_total_data():
-    """
-    Leest de tabbladen 'Total website all data' en 'Dutch website all data' in.
-    Data start op rij 3 (header op rij 2).
-    """
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
-        
-        # Inlezen met header=1 (rij 2 is header, rij 3 is data)
         df_tot_raw = conn.read(spreadsheet=SHEET_URL_GSC, worksheet="Total website all data", header=1)
         df_nl_raw = conn.read(spreadsheet=SHEET_URL_GSC, worksheet="Dutch website all data", header=1)
 
@@ -259,32 +253,38 @@ def load_nl_vs_total_data():
                 return pd.DataFrame()
             df = df_in.copy()
             
-            # Kolom A is de datum
+            # Datum bevindt zich in kolom A
             date_col = df.columns[0]
             df['Datum'] = df[date_col].apply(parse_single_date)
             df = df.dropna(subset=['Datum']).sort_values('Datum')
 
-            # Zoek relevante kolommen
             col_map = {}
-            for col in df.columns:
-                c_str = str(col).strip()
-                if "站点roi" in c_str.lower():
-                    col_map['ROI'] = col
-                elif "含税" in c_str and "毛利率" in c_str:
-                    col_map['GrossMargin_Tax'] = col
-                elif ("不含税" in c_str or "不含" in c_str) and "毛利率" in c_str:
-                    col_map['GrossMargin_NoTax'] = col
-                elif "fb来源占比" in c_str.lower() or ("fb" in c_str.lower() and "占比" in c_str):
-                    col_map['FB_Share'] = col
-                elif "fb归因roi" in c_str.lower() or ("fb" in c_str.lower() and "roi" in c_str.lower() and "归因" in c_str):
-                    col_map['FB_Attributed_ROI'] = col
-                elif "cpm" in c_str.lower():
-                    col_map['FB_CPM'] = col
+            for idx, col in enumerate(df.columns):
+                c_str = str(col).strip().replace(" ", "").replace("（", "(").replace("）", ")")
+                
+                if "站点roi" in c_str.lower() or idx == 3:  # Kolom D
+                    if 'ROI' not in col_map:
+                        col_map['ROI'] = col
+                elif ("含税" in c_str and "不含" not in c_str) or idx == 6:  # Kolom G
+                    if 'GrossMargin_Tax' not in col_map:
+                        col_map['GrossMargin_Tax'] = col
+                elif "不含税" in c_str or "不含" in c_str or idx == 7:  # Kolom H
+                    if 'GrossMargin_NoTax' not in col_map:
+                        col_map['GrossMargin_NoTax'] = col
+                elif "fb来源占比" in c_str.lower() or ("fb" in c_str.lower() and "占比" in c_str) or idx == 23:  # Kolom X
+                    if 'FB_Share' not in col_map:
+                        col_map['FB_Share'] = col
+                elif ("fb归因roi" in c_str.lower()) or ("fb" in c_str.lower() and "roi" in c_str.lower() and "归因" in c_str) or idx == 30:  # Kolom AE
+                    if 'FB_Attributed_ROI' not in col_map:
+                        col_map['FB_Attributed_ROI'] = col
+                elif "cpm" in c_str.lower() or idx == 34:  # Kolom AI
+                    if 'FB_CPM' not in col_map:
+                        col_map['FB_CPM'] = col
 
             df_clean = pd.DataFrame()
             df_clean['Datum'] = df['Datum']
             for standard_name, original_col in col_map.items():
-                is_pct = any(k in original_col for k in ['率', '占比', '%'])
+                is_pct = any(k in str(original_col) for k in ['率', '占比', '%'])
                 df_clean[standard_name] = df[original_col].apply(lambda v: clean_number(v, is_pct=is_pct))
 
             return df_clean
@@ -295,10 +295,9 @@ def load_nl_vs_total_data():
         if clean_tot.empty or clean_nl.empty:
             return pd.DataFrame()
 
-        # Merge op Datum
         df_comp = pd.merge(clean_nl, clean_tot, on='Datum', suffixes=('_NL', '_Total'), how='outer').sort_values('Datum')
         return df_comp
-    except Exception as e:
+    except Exception:
         return pd.DataFrame()
 
 def create_yoy_chart(df_merged, col, title, y_label, freq_code, color_current="#1f77b4", color_ly="#aec7e8"):
@@ -367,12 +366,6 @@ def create_yoy_chart(df_merged, col, title, y_label, freq_code, color_current="#
     return fig
 
 def create_comparison_3line_chart(df_in, metric_base, title, y_label, is_percentage=False, is_currency=False):
-    """
-    Maakt een grafiek met 3 lijnen en secundaire Y-as:
-    - Lijn 1: Dutch Website (NL) op linker Y-as
-    - Lijn 2: Total Website (Global) op linker Y-as
-    - Lijn 3: Ratio (NL / Total) op rechter Y-as
-    """
     col_nl = f"{metric_base}_NL"
     col_tot = f"{metric_base}_Total"
 
@@ -385,7 +378,6 @@ def create_comparison_3line_chart(df_in, metric_base, title, y_label, is_percent
     else:
         hover_main = "%{y:.2f}"
 
-    # Lijn 1: Dutch Website (NL)
     if col_nl in df_in.columns:
         s_nl = df_in.dropna(subset=[col_nl])
         fig.add_trace(go.Scatter(
@@ -397,7 +389,6 @@ def create_comparison_3line_chart(df_in, metric_base, title, y_label, is_percent
             hovertemplate=hover_main
         ), secondary_y=False)
 
-    # Lijn 2: Total Website (Global)
     if col_tot in df_in.columns:
         s_tot = df_in.dropna(subset=[col_tot])
         fig.add_trace(go.Scatter(
@@ -409,7 +400,6 @@ def create_comparison_3line_chart(df_in, metric_base, title, y_label, is_percent
             hovertemplate=hover_main
         ), secondary_y=False)
 
-    # Lijn 3: Ratio (NL / Total)
     if col_nl in df_in.columns and col_tot in df_in.columns:
         s_ratio = df_in.dropna(subset=[col_nl, col_tot]).copy()
         s_ratio = s_ratio[s_ratio[col_tot] != 0]
@@ -527,7 +517,6 @@ try:
     else:
         merged_df = filtered_daily.copy()
 
-    # Superset Total Revenue identificatie
     superset_tot_col = None
     for c in ["Superset 网站总销售额", "Superset 总销售额", "Superset销售额"]:
         if c in df.columns:
@@ -588,12 +577,11 @@ try:
         merged_gsc_df = pd.DataFrame()
         filtered_gsc_daily = pd.DataFrame()
 
-    # -------------------- PERIOD DISPLAY STRING --------------------
     start_str = start_date.strftime('%d-%m-%Y')
     end_str = end_date.strftime('%d-%m-%Y')
     period_title = f"({start_str} to {end_str}) — 今年 vs 去年 [{granularity}]"
 
-    # -------------------- TABS MET TAB 5 TOEGEVOEGD --------------------
+    # -------------------- TABS --------------------
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "💰 Revenue Metrics", 
         "📈 Traffic Metrics", 
@@ -884,7 +872,7 @@ try:
                 st.markdown("</div>", unsafe_allow_html=True)
 
             if sel_pa_start > sel_pa_end:
-                st.error("⚠️ 周期 A 的开始日期不能晚于结束日期。")
+                st.error("⚠️️ 周期 A 的开始日期不能晚于结束日期。")
             elif sel_pb_start > sel_pb_end:
                 st.error("⚠️ 周期 B 的开始日期不能晚于结束日期。")
             else:
@@ -975,13 +963,11 @@ try:
         if df_comparison.empty:
             st.warning("⚠️ Geen gegevens gevonden in tabbladen 'Total website all data' of 'Dutch website all data'. Controleer of de namen exact overeenkomen in Google Sheets.")
         else:
-            # Filter op geselecteerde datums uit de sidebar
             filtered_comp = df_comparison[
                 (df_comparison['Datum'].dt.date >= filter_start) & 
                 (df_comparison['Datum'].dt.date <= end_date)
             ].copy()
 
-            # Aggregatie per gekozen frequentie (Day / Week / Month / etc.)
             if freq_code != "D" and not filtered_comp.empty:
                 comp_rules = {c: 'mean' for c in filtered_comp.columns if c != 'Datum'}
                 plot_comp = filtered_comp.set_index('Datum').groupby(pd.Grouper(freq=freq_code)).agg(comp_rules).reset_index()
