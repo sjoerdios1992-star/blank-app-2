@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import datetime
-import re
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from streamlit_gsheets import GSheetsConnection
@@ -109,8 +108,8 @@ SHEET_URL_GSC = "https://docs.google.com/spreadsheets/d/1Qna6ZiJ3tlZzz9U2yL-qTwo
 # -------------------- HELPER FUNCTIONS --------------------
 def clean_number(val, is_pct=False, is_count=False):
     """
-    Converteert getallen, valuta en percentages foutloos.
-    is_count=True zorgt ervoor dat duizendtallen zoals 270,342 en 6,047 altijd als 270342 en 6047 worden gelezen.
+    Converteert getallen robuust.
+    Bij is_count=True (Clicks & Views) worden komma's ALTIJD als duizendtallen behandeld en gewist.
     """
     if pd.isna(val):
         return np.nan
@@ -127,25 +126,18 @@ def clean_number(val, is_pct=False, is_count=False):
 
     has_pct_symbol = '%' in s_raw
     s = s_raw.replace('$', '').replace('€', '').replace('%', '').strip()
-    if not s:
-        return np.nan
 
     if is_count:
-        # Clicks en Views zijn altijd hele getallen: verwijder alle komma's en spaties
+        # Altijd alle komma's verwijderen: 270,342 -> 270342, 6,047 -> 6047
         s = s.replace(',', '').replace(' ', '')
         try:
             return float(int(float(s)))
         except ValueError:
             return np.nan
 
-    # Voor overige bedragen / ratio's
-    if ',' in s and '.' in s:
-        s = s.replace(',', '')
-    elif ',' in s:
-        if re.search(r'\d+,\d{3}', s):
-            s = s.replace(',', '')
-        else:
-            s = s.replace(',', '.')
+    # Voor reguliere valuta en percentages:
+    # Komma's in Google Sheets zijn altijd Engelse duizendtallen
+    s = s.replace(',', '')
 
     try:
         num = float(s)
@@ -387,7 +379,7 @@ def create_comparison_3line_chart(df_in, metric_base, title, y_label, is_percent
     elif is_currency:
         hover_main = "$%{y:,.2f}"
     elif is_count_metric:
-        hover_main = "%{y:,.0f}"  # Altijd als geheel getal (bijv 3,878,190 en 270,342)
+        hover_main = "%{y:,.0f}"  # Altijd als geheel getal met duizendtallen
     else:
         hover_main = "%{y:.2f}"
 
@@ -435,7 +427,7 @@ def create_comparison_3line_chart(df_in, metric_base, title, y_label, is_percent
         height=380
     )
     
-    # Zorg dat Y-as voor views en clicks netjes gehele getallen toont
+    # Y-assen formatteren
     if is_count_metric:
         fig.update_yaxes(title_text=y_label, secondary_y=False, rangemode="tozero", tickformat=",.0f")
     else:
