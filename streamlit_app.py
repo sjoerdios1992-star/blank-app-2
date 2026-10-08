@@ -253,7 +253,6 @@ def load_nl_vs_total_data():
                 return pd.DataFrame()
             df = df_in.copy()
             
-            # Datum bevindt zich in kolom A
             date_col = df.columns[0]
             df['Datum'] = df[date_col].apply(parse_single_date)
             df = df.dropna(subset=['Datum']).sort_values('Datum')
@@ -280,13 +279,13 @@ def load_nl_vs_total_data():
                 elif "cpm" in c_str or idx == 34:  # Kolom AI
                     if 'FB_CPM' not in col_map:
                         col_map['FB_CPM'] = col
-                elif "ctr" in c_str or idx == 35:  # Kolom AJ: Facebook CTR
+                elif "ctr" in c_str or idx == 35:  # Kolom AJ
                     if 'FB_CTR' not in col_map:
                         col_map['FB_CTR'] = col
-                elif "click" in c_str or "clikc" in c_str or idx == 36:  # Kolom AK: Facebook clicks
+                elif "click" in c_str or "clikc" in c_str or idx == 36:  # Kolom AK
                     if 'FB_Clicks' not in col_map:
                         col_map['FB_Clicks'] = col
-                elif "view" in c_str or idx == 37:  # Kolom AL: Facebook views
+                elif "view" in c_str or idx == 37:  # Kolom AL
                     if 'FB_Views' not in col_map:
                         col_map['FB_Views'] = col
 
@@ -390,7 +389,7 @@ def create_comparison_3line_chart(df_in, metric_base, title, y_label, is_percent
     elif is_currency:
         hover_main = "$%{y:,.2f}"
     else:
-        hover_main = "%{y:.2f}"
+        hover_main = "%{y:,.0f}" if any(k in metric_base.lower() for k in ['clicks', 'views']) else "%{y:.2f}"
 
     if col_nl in df_in.columns:
         s_nl = df_in.dropna(subset=[col_nl])
@@ -437,85 +436,6 @@ def create_comparison_3line_chart(df_in, metric_base, title, y_label, is_percent
     )
     fig.update_yaxes(title_text=y_label, secondary_y=False, rangemode="tozero")
     fig.update_yaxes(title_text="Ratio (NL vs Total %)", secondary_y=True, ticksuffix="%")
-
-    return fig
-
-def create_fb_combined_funnel_chart(df_in):
-    """
-    Combineert Facebook Views, Clicks en CTR in 1 master-grafiek met 3 gekoppelde subpanels
-    zodat elke metriek zijn eigen schaal en ratio behoudt.
-    """
-    fig = make_subplots(
-        rows=3, cols=1,
-        shared_xaxes=True,
-        vertical_spacing=0.08,
-        subplot_titles=[
-            "1️⃣ Facebook Views (展示量: NL vs Total & Ratio)",
-            "2️⃣ Facebook Clicks (点击量: NL vs Total & Ratio)",
-            "3️⃣ Facebook CTR (点击率: NL vs Total & Ratio)"
-        ],
-        specs=[[{"secondary_y": True}], [{"secondary_y": True}], [{"secondary_y": True}]]
-    )
-
-    metrics_config = [
-        ("FB_Views", 1, "Views", "%{y:,.0f}", False),
-        ("FB_Clicks", 2, "Clicks", "%{y:,.0f}", False),
-        ("FB_CTR", 3, "CTR (%)", "%{y:.2f}%", True)
-    ]
-
-    for m_key, r_idx, label, h_fmt, is_pct in metrics_config:
-        col_nl = f"{m_key}_NL"
-        col_tot = f"{m_key}_Total"
-
-        # NL
-        if col_nl in df_in.columns:
-            s_nl = df_in.dropna(subset=[col_nl])
-            fig.add_trace(go.Scatter(
-                x=s_nl['Datum'],
-                y=s_nl[col_nl],
-                name=f"{label} (NL)",
-                mode="lines+markers",
-                line=dict(color="#1f77b4", width=3),
-                hovertemplate=h_fmt
-            ), row=r_idx, col=1, secondary_y=False)
-
-        # Total
-        if col_tot in df_in.columns:
-            s_tot = df_in.dropna(subset=[col_tot])
-            fig.add_trace(go.Scatter(
-                x=s_tot['Datum'],
-                y=s_tot[col_tot],
-                name=f"{label} (Total)",
-                mode="lines+markers",
-                line=dict(color="#ff7f0e", width=2, dash='dash'),
-                hovertemplate=h_fmt
-            ), row=r_idx, col=1, secondary_y=False)
-
-        # Ratio NL / Total
-        if col_nl in df_in.columns and col_tot in df_in.columns:
-            s_r = df_in.dropna(subset=[col_nl, col_tot]).copy()
-            s_r = s_r[s_r[col_tot] != 0]
-            s_r['Ratio'] = (s_r[col_nl] / s_r[col_tot]) * 100
-
-            fig.add_trace(go.Scatter(
-                x=s_r['Datum'],
-                y=s_r['Ratio'],
-                name=f"Ratio {label} (%)",
-                mode="lines+markers",
-                line=dict(color="#2ca02c", width=2, dash='dot'),
-                hovertemplate="%{y:.2f}%"
-            ), row=r_idx, col=1, secondary_y=True)
-
-        fig.update_yaxes(title_text=label, row=r_idx, col=1, secondary_y=False, rangemode="tozero")
-        fig.update_yaxes(title_text="Ratio %", row=r_idx, col=1, secondary_y=True, ticksuffix="%")
-
-    fig.update_layout(
-        title="📱 Facebook Traffic Funnel: Views ➔ Clicks ➔ CTR (NL vs Total & Ratio)",
-        hovermode="x unified",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        margin=dict(l=20, r=20, t=60, b=20),
-        height=750
-    )
 
     return fig
 
@@ -840,7 +760,7 @@ try:
             val_str = f"{int(c_links):,}" if pd.notna(c_links) else "—"
             delta_str = format_kpi_delta(c_links - ly_links, ly_links) if pd.notna(c_links) and pd.notna(ly_links) else None
             st.metric("Total Backlinks (外链)", val_str, delta_str)
-            st.caption(f"去年: {int(ly_links):,}" if pd.notna(ly_links) else "去年: —")
+            st.caption(f"去年: {int(ly_links):,}" if pd.notna(ly_links) else "举行: —")
         with s2_c2:
             val_str = f"{int(c_domains):,}" if pd.notna(c_domains) else "—"
             delta_str = format_kpi_delta(c_domains - ly_domains, ly_domains) if pd.notna(c_domains) and pd.notna(ly_domains) else None
@@ -1073,7 +993,7 @@ try:
             else:
                 plot_comp = filtered_comp.copy()
 
-            # Bovenste sectie: Financiële KPI's & ROI
+            # Sectie 1: Financiële KPI's & ROI
             st.markdown("### 💰 Financiële & Marketing Efficiency Metrics")
             c1, c2 = st.columns(2)
             with c1:
@@ -1105,12 +1025,24 @@ try:
                 )
 
             st.markdown("---")
-            # Onderste sectie: De nieuwe gecombineerde Facebook Funnel grafiek
-            st.markdown("### 📱 Facebook Funnel Performance (Views ➔ Clicks ➔ CTR)")
-            st.plotly_chart(
-                create_fb_combined_funnel_chart(plot_comp),
-                use_container_width=True
-            )
+            # Sectie 2: Drie aparte grafieken voor Facebook Views, Clicks en CTR
+            st.markdown("### 📱 Facebook Traffic & Engagement Metrics")
+            f1, f2, f3 = st.columns(3)
+            with f1:
+                st.plotly_chart(
+                    create_comparison_3line_chart(plot_comp, "FB_Views", "Facebook Views (展示量: NL vs Total)", "Views (Count)"),
+                    use_container_width=True
+                )
+            with f2:
+                st.plotly_chart(
+                    create_comparison_3line_chart(plot_comp, "FB_Clicks", "Facebook Clicks (点击量: NL vs Total)", "Clicks (Count)"),
+                    use_container_width=True
+                )
+            with f3:
+                st.plotly_chart(
+                    create_comparison_3line_chart(plot_comp, "FB_CTR", "Facebook CTR (点击率: NL vs Total)", "CTR (%)", is_percentage=True),
+                    use_container_width=True
+                )
 
             st.markdown("#### 📋 Gecombineerde Vergelijkingstabel (Data Table)")
             st.dataframe(plot_comp.sort_values('Datum', ascending=False), use_container_width=True)
