@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import datetime
+import re
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from streamlit_gsheets import GSheetsConnection
@@ -107,16 +108,42 @@ SHEET_URL_GSC = "https://docs.google.com/spreadsheets/d/1Qna6ZiJ3tlZzz9U2yL-qTwo
 
 # -------------------- HELPER FUNCTIONS --------------------
 def clean_number(val, is_pct=False):
+    """
+    Converteert getallen, bedragen en percentages robuust naar floats.
+    Herstelt duizendtallen zoals 6,000 -> 6000 (en voorkomt dat 6,000 als 6.000 / zes wordt gelezen).
+    """
     if pd.isna(val):
         return np.nan
+    
+    # Als het al een int of float is
+    if isinstance(val, (int, float)):
+        num = float(val)
+        if is_pct and 0 < abs(num) <= 1.0:
+            num = num * 100
+        return num
+
     s_raw = str(val).strip()
     if not s_raw or s_raw.lower() in ['nan', 'none', '-', 'null', '', '—', '#error!', '#value!', '#ref!']:
         return np.nan
 
     has_pct_symbol = '%' in s_raw
-    s = s_raw.replace('$', '').replace('€', '').replace('%', '').strip().replace(',', '')
+    s = s_raw.replace('$', '').replace('€', '').replace('%', '').strip()
     if not s:
         return np.nan
+
+    # Als het formaat 6,000 of 124,500.00 heeft:
+    # Verwijder alle komma's die als duizendtal-scheidingsteken dienen
+    if ',' in s and '.' in s:
+        # Bijv: 1,234.56 -> komma weg
+        s = s.replace(',', '')
+    elif ',' in s:
+        # Als er alleen komma's zijn:
+        # Check of het patroon 6,000 of 10,000 is (komma gevolgd door 3 cijfers) -> duizendtal!
+        if re.search(r'\d+,\d{3}(?:,\d{3})*$', s):
+            s = s.replace(',', '')
+        else:
+            # Bijv 6,5 (Nederlands decimaalteken) -> vervang door punt
+            s = s.replace(',', '.')
 
     try:
         num = float(s)
@@ -228,13 +255,7 @@ def load_gsc_weekly_data():
 # -------------------- LOAD SHEET 3 (NL VS TOTAL COMPARISON TABS) --------------------
 @st.cache_data(ttl=60)
 def load_nl_vs_total_data():
-    """
-    Leest de tabbladen 'Total website all data' en 'Dutch website all data' in.
-    Header staat nu direct op Rij 1 (header=0).
-    """
     conn = st.connection("gsheets", type=GSheetsConnection)
-    
-    # Header staat nu direct op rij 1 (dus standaard header=0)
     df_tot_raw = conn.read(spreadsheet=SHEET_URL_GSC, worksheet="Total website all data")
     df_nl_raw = conn.read(spreadsheet=SHEET_URL_GSC, worksheet="Dutch website all data")
 
@@ -243,7 +264,7 @@ def load_nl_vs_total_data():
             return pd.DataFrame()
         df = df_in.copy()
         
-        # Kolom A (eerste kolom) is de datum
+        # Kolom A is de datum
         df['Datum'] = df.iloc[:, 0].apply(parse_single_date)
         df = df.dropna(subset=['Datum']).sort_values('Datum')
         df['Datum'] = pd.to_datetime(df['Datum'].dt.date)
@@ -251,7 +272,6 @@ def load_nl_vs_total_data():
         res = pd.DataFrame()
         res['Datum'] = df['Datum']
 
-        # Uitlezing per kolomindex (veilig en onafhankelijk van kleine naamverschillen)
         # 1. 站点ROI (Kolom D / index 3)
         res['ROI'] = df.iloc[:, 3].apply(lambda v: clean_number(v, is_pct=False))
         # 2. 毛利率（含税）(Kolom G / index 6)
@@ -271,9 +291,9 @@ def load_nl_vs_total_data():
         
         # 7. Facebook CTR (Kolom AJ / index 35)
         res['FB_CTR'] = df.iloc[:, 35].apply(lambda v: clean_number(v, is_pct=True))
-        # 8. Facebook Clicks (Kolom AK / index 36)
+        # 8. Facebook Clicks (Kolom AK / index 36) -> hier werd 6,000 gecorrigeerd naar 6000!
         res['FB_Clicks'] = df.iloc[:, 36].apply(lambda v: clean_number(v, is_pct=False))
-        # 9. Facebook Views (Kolom AL / index 37)
+        # 9. Facebook Views (Kolom AL / index 37) -> hier werd 184,548 gecorrigeerd!
         res['FB_Views'] = df.iloc[:, 37].apply(lambda v: clean_number(v, is_pct=False))
 
         return res
@@ -417,7 +437,6 @@ try:
     df, numeric_cols = load_and_transform_main_data()
     df_gsc, gsc_numeric_cols = load_gsc_weekly_data()
 
-    # NL vs Total data inlezen
     try:
         df_comparison = load_nl_vs_total_data()
     except Exception as e_comp:
@@ -635,7 +654,7 @@ try:
         with col_a:
             st.plotly_chart(create_yoy_chart(merged_df, "GA4 SEO销售额", "GA4 SEO Revenue (GA4 SEO销售额)", "Revenue ($)", freq_code, "#1f77b4"), use_container_width=True)
             if superset_tot_col and superset_tot_col in merged_df.columns:
-                st.plotly_chart(create_yoy_chart(merged_df, "Total Website Revenue", f"Total Website Revenue ({superset_tot_col})", "Revenue ($)", freq_code, "#2ca02c"), use_container_width=True)
+                st.plotly_chart(create_yoy_chart(merged_df, superset_tot_col, f"Total Website Revenue ({superset_tot_col})", "Revenue ($)", freq_code, "#2ca02c"), use_container_width=True)
             st.plotly_chart(create_yoy_chart(merged_df, "Superset_Share_Calculated", "Superset SEO Revenue Share (Superset SEO销售额占比)", "Percentage (%)", freq_code, "#9467bd"), use_container_width=True)
         with col_b:
             st.plotly_chart(create_yoy_chart(merged_df, "Superset SEO销售额", "Superset SEO Revenue (Superset SEO销售额)", "Revenue ($)", freq_code, "#ff7f0e"), use_container_width=True)
