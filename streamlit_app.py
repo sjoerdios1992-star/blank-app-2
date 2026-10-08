@@ -107,20 +107,19 @@ SHEET_URL_MAIN = "https://docs.google.com/spreadsheets/d/1GLAGMkVx5DMXylG0bbdvkz
 SHEET_URL_GSC = "https://docs.google.com/spreadsheets/d/1Qna6ZiJ3tlZzz9U2yL-qTwon3MFGOwRKFXmZGUIcXZ4/edit?gid=0#gid=0"
 
 # -------------------- HELPER FUNCTIONS --------------------
-def clean_number(val, is_pct=False):
+def clean_number(val, is_pct=False, is_count=False):
     """
-    Converteert getallen, bedragen en percentages robuust naar floats.
-    Herstelt duizendtallen zoals 6,000 -> 6000 (en voorkomt dat 6,000 als 6.000 / zes wordt gelezen).
+    Converteert getallen, valuta en percentages foutloos.
+    is_count=True zorgt ervoor dat duizendtallen zoals 270,342 en 6,047 altijd als 270342 en 6047 worden gelezen.
     """
     if pd.isna(val):
         return np.nan
     
-    # Als het al een int of float is
     if isinstance(val, (int, float)):
         num = float(val)
         if is_pct and 0 < abs(num) <= 1.0:
             num = num * 100
-        return num
+        return round(num) if is_count else num
 
     s_raw = str(val).strip()
     if not s_raw or s_raw.lower() in ['nan', 'none', '-', 'null', '', '—', '#error!', '#value!', '#ref!']:
@@ -131,18 +130,21 @@ def clean_number(val, is_pct=False):
     if not s:
         return np.nan
 
-    # Als het formaat 6,000 of 124,500.00 heeft:
-    # Verwijder alle komma's die als duizendtal-scheidingsteken dienen
+    if is_count:
+        # Clicks en Views zijn altijd hele getallen: verwijder alle komma's en spaties
+        s = s.replace(',', '').replace(' ', '')
+        try:
+            return float(int(float(s)))
+        except ValueError:
+            return np.nan
+
+    # Voor overige bedragen / ratio's
     if ',' in s and '.' in s:
-        # Bijv: 1,234.56 -> komma weg
         s = s.replace(',', '')
     elif ',' in s:
-        # Als er alleen komma's zijn:
-        # Check of het patroon 6,000 of 10,000 is (komma gevolgd door 3 cijfers) -> duizendtal!
-        if re.search(r'\d+,\d{3}(?:,\d{3})*$', s):
+        if re.search(r'\d+,\d{3}', s):
             s = s.replace(',', '')
         else:
-            # Bijv 6,5 (Nederlands decimaalteken) -> vervang door punt
             s = s.replace(',', '.')
 
     try:
@@ -291,10 +293,10 @@ def load_nl_vs_total_data():
         
         # 7. Facebook CTR (Kolom AJ / index 35)
         res['FB_CTR'] = df.iloc[:, 35].apply(lambda v: clean_number(v, is_pct=True))
-        # 8. Facebook Clicks (Kolom AK / index 36) -> hier werd 6,000 gecorrigeerd naar 6000!
-        res['FB_Clicks'] = df.iloc[:, 36].apply(lambda v: clean_number(v, is_pct=False))
-        # 9. Facebook Views (Kolom AL / index 37) -> hier werd 184,548 gecorrigeerd!
-        res['FB_Views'] = df.iloc[:, 37].apply(lambda v: clean_number(v, is_pct=False))
+        # 8. Facebook Clicks (Kolom AK / index 36) - gegarandeerd als duizendtal parsed
+        res['FB_Clicks'] = df.iloc[:, 36].apply(lambda v: clean_number(v, is_count=True))
+        # 9. Facebook Views (Kolom AL / index 37) - gegarandeerd als duizendtal parsed
+        res['FB_Views'] = df.iloc[:, 37].apply(lambda v: clean_number(v, is_count=True))
 
         return res
 
@@ -378,12 +380,16 @@ def create_comparison_3line_chart(df_in, metric_base, title, y_label, is_percent
 
     fig = make_subplots(specs=[[{"secondary_y": True}]])
 
+    is_count_metric = any(k in metric_base.lower() for k in ['clicks', 'views'])
+
     if is_percentage:
         hover_main = "%{y:.2f}%"
     elif is_currency:
         hover_main = "$%{y:,.2f}"
+    elif is_count_metric:
+        hover_main = "%{y:,.0f}"  # Altijd als geheel getal (bijv 3,878,190 en 270,342)
     else:
-        hover_main = "%{y:,.0f}" if any(k in metric_base.lower() for k in ['clicks', 'views']) else "%{y:.2f}"
+        hover_main = "%{y:.2f}"
 
     if col_nl in df_in.columns:
         s_nl = df_in.dropna(subset=[col_nl])
@@ -428,7 +434,13 @@ def create_comparison_3line_chart(df_in, metric_base, title, y_label, is_percent
         margin=dict(l=20, r=20, t=50, b=20),
         height=380
     )
-    fig.update_yaxes(title_text=y_label, secondary_y=False, rangemode="tozero")
+    
+    # Zorg dat Y-as voor views en clicks netjes gehele getallen toont
+    if is_count_metric:
+        fig.update_yaxes(title_text=y_label, secondary_y=False, rangemode="tozero", tickformat=",.0f")
+    else:
+        fig.update_yaxes(title_text=y_label, secondary_y=False, rangemode="tozero")
+        
     fig.update_yaxes(title_text="Ratio (NL vs Total %)", secondary_y=True, ticksuffix="%")
 
     return fig
@@ -654,7 +666,7 @@ try:
         with col_a:
             st.plotly_chart(create_yoy_chart(merged_df, "GA4 SEO销售额", "GA4 SEO Revenue (GA4 SEO销售额)", "Revenue ($)", freq_code, "#1f77b4"), use_container_width=True)
             if superset_tot_col and superset_tot_col in merged_df.columns:
-                st.plotly_chart(create_yoy_chart(merged_df, superset_tot_col, f"Total Website Revenue ({superset_tot_col})", "Revenue ($)", freq_code, "#2ca02c"), use_container_width=True)
+                st.plotly_chart(create_yoy_chart(merged_df, "Total Website Revenue", f"Total Website Revenue ({superset_tot_col})", "Revenue ($)", freq_code, "#2ca02c"), use_container_width=True)
             st.plotly_chart(create_yoy_chart(merged_df, "Superset_Share_Calculated", "Superset SEO Revenue Share (Superset SEO销售额占比)", "Percentage (%)", freq_code, "#9467bd"), use_container_width=True)
         with col_b:
             st.plotly_chart(create_yoy_chart(merged_df, "Superset SEO销售额", "Superset SEO Revenue (Superset SEO销售额)", "Revenue ($)", freq_code, "#ff7f0e"), use_container_width=True)
