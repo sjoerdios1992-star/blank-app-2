@@ -230,7 +230,6 @@ def load_gsc_weekly_data():
 def load_nl_vs_total_data():
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
-        # Lees in vanaf rij 2 (header=1)
         df_tot_raw = conn.read(spreadsheet=SHEET_URL_GSC, worksheet="Total website all data", header=1)
         df_nl_raw = conn.read(spreadsheet=SHEET_URL_GSC, worksheet="Dutch website all data", header=1)
 
@@ -242,8 +241,9 @@ def load_nl_vs_total_data():
             # Kolom A is de datum
             df['Datum'] = df.iloc[:, 0].apply(parse_single_date)
             df = df.dropna(subset=['Datum']).sort_values('Datum')
+            # Normalizeer de datums naar midnight zodat ze altijd 100% matchen
+            df['Datum'] = pd.to_datetime(df['Datum'].dt.date)
 
-            # We mappen rechtstreeks op positie EN op naam ter redundancy
             res = pd.DataFrame()
             res['Datum'] = df['Datum']
 
@@ -252,10 +252,8 @@ def load_nl_vs_total_data():
             # 2. 毛利率（含税）(Kolom G / index 6)
             res['GrossMargin_Tax'] = df.iloc[:, 6].apply(lambda v: clean_number(v, is_pct=True))
             # 3. 毛利(不含税) (Kolom I / index 8 = 毛利润（不含税）in $, of Kolom H)
-            # Als kolom 8 getallen bevat, is dat de winst in $, anders kolom 7
-            val_col8 = df.iloc[:, 8].apply(lambda v: clean_number(v, is_pct=False))
-            if val_col8.notna().sum() > 0:
-                res['GrossProfit_NoTax'] = val_col8
+            if df.shape[1] > 8 and df.iloc[:, 8].apply(lambda v: clean_number(v, is_pct=False)).notna().sum() > 0:
+                res['GrossProfit_NoTax'] = df.iloc[:, 8].apply(lambda v: clean_number(v, is_pct=False))
             else:
                 res['GrossProfit_NoTax'] = df.iloc[:, 7].apply(lambda v: clean_number(v, is_pct=False))
             
@@ -281,9 +279,10 @@ def load_nl_vs_total_data():
         if clean_tot.empty or clean_nl.empty:
             return pd.DataFrame()
 
-        df_comp = pd.merge(clean_nl, clean_tot, on='Datum', suffixes=('_NL', '_Total'), how='inner').sort_values('Datum')
+        # Gebruik outer merge zodat er nooit rijen wegvallen als één datum verschilt
+        df_comp = pd.merge(clean_nl, clean_tot, on='Datum', suffixes=('_NL', '_Total'), how='outer').sort_values('Datum')
         return df_comp
-    except Exception as e:
+    except Exception:
         return pd.DataFrame()
 
 def create_yoy_chart(df_merged, col, title, y_label, freq_code, color_current="#1f77b4", color_ly="#aec7e8"):
