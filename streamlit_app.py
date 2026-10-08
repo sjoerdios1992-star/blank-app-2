@@ -228,62 +228,64 @@ def load_gsc_weekly_data():
 # -------------------- LOAD SHEET 3 (NL VS TOTAL COMPARISON TABS) --------------------
 @st.cache_data(ttl=60)
 def load_nl_vs_total_data():
-    try:
-        conn = st.connection("gsheets", type=GSheetsConnection)
-        df_tot_raw = conn.read(spreadsheet=SHEET_URL_GSC, worksheet="Total website all data", header=1)
-        df_nl_raw = conn.read(spreadsheet=SHEET_URL_GSC, worksheet="Dutch website all data", header=1)
+    """
+    Leest de tabbladen 'Total website all data' en 'Dutch website all data' in.
+    Header staat nu direct op Rij 1 (header=0).
+    """
+    conn = st.connection("gsheets", type=GSheetsConnection)
+    
+    # Header staat nu direct op rij 1 (dus standaard header=0)
+    df_tot_raw = conn.read(spreadsheet=SHEET_URL_GSC, worksheet="Total website all data")
+    df_nl_raw = conn.read(spreadsheet=SHEET_URL_GSC, worksheet="Dutch website all data")
 
-        def process_tab(df_in):
-            if df_in is None or df_in.empty:
-                return pd.DataFrame()
-            df = df_in.copy()
-            
-            # Kolom A is de datum
-            df['Datum'] = df.iloc[:, 0].apply(parse_single_date)
-            df = df.dropna(subset=['Datum']).sort_values('Datum')
-            # Normalizeer de datums naar midnight zodat ze altijd 100% matchen
-            df['Datum'] = pd.to_datetime(df['Datum'].dt.date)
-
-            res = pd.DataFrame()
-            res['Datum'] = df['Datum']
-
-            # 1. 站点ROI (Kolom D / index 3)
-            res['ROI'] = df.iloc[:, 3].apply(lambda v: clean_number(v, is_pct=False))
-            # 2. 毛利率（含税）(Kolom G / index 6)
-            res['GrossMargin_Tax'] = df.iloc[:, 6].apply(lambda v: clean_number(v, is_pct=True))
-            # 3. 毛利(不含税) (Kolom I / index 8 = 毛利润（不含税）in $, of Kolom H)
-            if df.shape[1] > 8 and df.iloc[:, 8].apply(lambda v: clean_number(v, is_pct=False)).notna().sum() > 0:
-                res['GrossProfit_NoTax'] = df.iloc[:, 8].apply(lambda v: clean_number(v, is_pct=False))
-            else:
-                res['GrossProfit_NoTax'] = df.iloc[:, 7].apply(lambda v: clean_number(v, is_pct=False))
-            
-            # 4. FB来源占比 (Kolom X / index 23)
-            res['FB_Share'] = df.iloc[:, 23].apply(lambda v: clean_number(v, is_pct=True))
-            # 5. FB归因ROI (Kolom AE / index 30)
-            res['FB_Attributed_ROI'] = df.iloc[:, 30].apply(lambda v: clean_number(v, is_pct=False))
-            # 6. FB-CPM (Kolom AI / index 34)
-            res['FB_CPM'] = df.iloc[:, 34].apply(lambda v: clean_number(v, is_pct=False))
-            
-            # 7. Facebook CTR (Kolom AJ / index 35)
-            res['FB_CTR'] = df.iloc[:, 35].apply(lambda v: clean_number(v, is_pct=True))
-            # 8. Facebook Clicks (Kolom AK / index 36)
-            res['FB_Clicks'] = df.iloc[:, 36].apply(lambda v: clean_number(v, is_pct=False))
-            # 9. Facebook Views (Kolom AL / index 37)
-            res['FB_Views'] = df.iloc[:, 37].apply(lambda v: clean_number(v, is_pct=False))
-
-            return res
-
-        clean_tot = process_tab(df_tot_raw)
-        clean_nl = process_tab(df_nl_raw)
-
-        if clean_tot.empty or clean_nl.empty:
+    def process_tab(df_in):
+        if df_in is None or df_in.empty:
             return pd.DataFrame()
+        df = df_in.copy()
+        
+        # Kolom A (eerste kolom) is de datum
+        df['Datum'] = df.iloc[:, 0].apply(parse_single_date)
+        df = df.dropna(subset=['Datum']).sort_values('Datum')
+        df['Datum'] = pd.to_datetime(df['Datum'].dt.date)
 
-        # Gebruik outer merge zodat er nooit rijen wegvallen als één datum verschilt
-        df_comp = pd.merge(clean_nl, clean_tot, on='Datum', suffixes=('_NL', '_Total'), how='outer').sort_values('Datum')
-        return df_comp
-    except Exception:
+        res = pd.DataFrame()
+        res['Datum'] = df['Datum']
+
+        # Uitlezing per kolomindex (veilig en onafhankelijk van kleine naamverschillen)
+        # 1. 站点ROI (Kolom D / index 3)
+        res['ROI'] = df.iloc[:, 3].apply(lambda v: clean_number(v, is_pct=False))
+        # 2. 毛利率（含税）(Kolom G / index 6)
+        res['GrossMargin_Tax'] = df.iloc[:, 6].apply(lambda v: clean_number(v, is_pct=True))
+        # 3. 毛利(不含税) (Kolom I / index 8 = bedrag in $, anders Kolom H / index 7)
+        if df.shape[1] > 8 and df.iloc[:, 8].apply(lambda v: clean_number(v, is_pct=False)).notna().sum() > 0:
+            res['GrossProfit_NoTax'] = df.iloc[:, 8].apply(lambda v: clean_number(v, is_pct=False))
+        else:
+            res['GrossProfit_NoTax'] = df.iloc[:, 7].apply(lambda v: clean_number(v, is_pct=False))
+        
+        # 4. FB来源占比 (Kolom X / index 23)
+        res['FB_Share'] = df.iloc[:, 23].apply(lambda v: clean_number(v, is_pct=True))
+        # 5. FB归因ROI (Kolom AE / index 30)
+        res['FB_Attributed_ROI'] = df.iloc[:, 30].apply(lambda v: clean_number(v, is_pct=False))
+        # 6. FB-CPM (Kolom AI / index 34)
+        res['FB_CPM'] = df.iloc[:, 34].apply(lambda v: clean_number(v, is_pct=False))
+        
+        # 7. Facebook CTR (Kolom AJ / index 35)
+        res['FB_CTR'] = df.iloc[:, 35].apply(lambda v: clean_number(v, is_pct=True))
+        # 8. Facebook Clicks (Kolom AK / index 36)
+        res['FB_Clicks'] = df.iloc[:, 36].apply(lambda v: clean_number(v, is_pct=False))
+        # 9. Facebook Views (Kolom AL / index 37)
+        res['FB_Views'] = df.iloc[:, 37].apply(lambda v: clean_number(v, is_pct=False))
+
+        return res
+
+    clean_tot = process_tab(df_tot_raw)
+    clean_nl = process_tab(df_nl_raw)
+
+    if clean_tot.empty or clean_nl.empty:
         return pd.DataFrame()
+
+    df_comp = pd.merge(clean_nl, clean_tot, on='Datum', suffixes=('_NL', '_Total'), how='outer').sort_values('Datum')
+    return df_comp
 
 def create_yoy_chart(df_merged, col, title, y_label, freq_code, color_current="#1f77b4", color_ly="#aec7e8"):
     fig = go.Figure()
@@ -414,7 +416,13 @@ def create_comparison_3line_chart(df_in, metric_base, title, y_label, is_percent
 try:
     df, numeric_cols = load_and_transform_main_data()
     df_gsc, gsc_numeric_cols = load_gsc_weekly_data()
-    df_comparison = load_nl_vs_total_data()
+
+    # NL vs Total data inlezen
+    try:
+        df_comparison = load_nl_vs_total_data()
+    except Exception as e_comp:
+        df_comparison = pd.DataFrame()
+        st.sidebar.error(f"Fout bij inlezen tabbladen NL/Total: {e_comp}")
 
     if df.empty:
         st.error("No valid date rows found in the main sheet.")
@@ -627,7 +635,7 @@ try:
         with col_a:
             st.plotly_chart(create_yoy_chart(merged_df, "GA4 SEO销售额", "GA4 SEO Revenue (GA4 SEO销售额)", "Revenue ($)", freq_code, "#1f77b4"), use_container_width=True)
             if superset_tot_col and superset_tot_col in merged_df.columns:
-                st.plotly_chart(create_yoy_chart(merged_df, superset_tot_col, f"Total Website Revenue ({superset_tot_col})", "Revenue ($)", freq_code, "#2ca02c"), use_container_width=True)
+                st.plotly_chart(create_yoy_chart(merged_df, "Total Website Revenue", f"Total Website Revenue ({superset_tot_col})", "Revenue ($)", freq_code, "#2ca02c"), use_container_width=True)
             st.plotly_chart(create_yoy_chart(merged_df, "Superset_Share_Calculated", "Superset SEO Revenue Share (Superset SEO销售额占比)", "Percentage (%)", freq_code, "#9467bd"), use_container_width=True)
         with col_b:
             st.plotly_chart(create_yoy_chart(merged_df, "Superset SEO销售额", "Superset SEO Revenue (Superset SEO销售额)", "Revenue ($)", freq_code, "#ff7f0e"), use_container_width=True)
