@@ -110,7 +110,7 @@ def clean_number(val, is_pct=False):
     if pd.isna(val):
         return np.nan
     s_raw = str(val).strip()
-    if not s_raw or s_raw.lower() in ['nan', 'none', '-', 'null', '']:
+    if not s_raw or s_raw.lower() in ['nan', 'none', '-', 'null', '', '—', '#error!', '#value!', '#ref!']:
         return np.nan
 
     has_pct_symbol = '%' in s_raw
@@ -134,7 +134,7 @@ def parse_single_date(val):
         return pd.to_datetime(val)
     
     s = str(val).strip()
-    if not s or s.lower() in ['nan', 'nat', 'none', '-', '']:
+    if not s or s.lower() in ['nan', 'nat', 'none', '-', '', '汇总', 'total']:
         return pd.NaT
 
     try:
@@ -202,29 +202,14 @@ def load_and_transform_main_data():
 def load_gsc_weekly_data():
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
-        raw_gsc = conn.read(spreadsheet=SHEET_URL_GSC)
+        raw_gsc = conn.read(spreadsheet=SHEET_URL_GSC, worksheet="Blad1")
         if raw_gsc is None or raw_gsc.empty:
             return pd.DataFrame(), []
 
         df_gsc = raw_gsc.copy()
-        date_col_name = None
-        for col in df_gsc.columns:
-            if any(k in str(col).lower() for k in ['date', 'datum', 'week', '日期', '时间']):
-                date_col_name = col
-                break
-        
-        if date_col_name is None:
-            for col in df_gsc.columns:
-                parsed_sample = df_gsc[col].dropna().head(5).apply(parse_single_date)
-                if parsed_sample.notna().sum() >= 3:
-                    date_col_name = col
-                    break
-
-        if date_col_name:
-            df_gsc['Datum'] = df_gsc[date_col_name].apply(parse_single_date)
-            df_gsc = df_gsc.dropna(subset=['Datum']).sort_values('Datum')
-        else:
-            df_gsc['Datum'] = pd.date_range(end=pd.Timestamp.now(), periods=len(df_gsc), freq='D')
+        date_col_name = df_gsc.columns[0]
+        df_gsc['Datum'] = df_gsc[date_col_name].apply(parse_single_date)
+        df_gsc = df_gsc.dropna(subset=['Datum']).sort_values('Datum')
 
         gsc_numeric_cols = []
         for col in df_gsc.columns:
@@ -245,6 +230,7 @@ def load_gsc_weekly_data():
 def load_nl_vs_total_data():
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
+        # Lees in vanaf rij 2 (header=1)
         df_tot_raw = conn.read(spreadsheet=SHEET_URL_GSC, worksheet="Total website all data", header=1)
         df_nl_raw = conn.read(spreadsheet=SHEET_URL_GSC, worksheet="Dutch website all data", header=1)
 
@@ -253,45 +239,41 @@ def load_nl_vs_total_data():
                 return pd.DataFrame()
             df = df_in.copy()
             
-            # Datum bevindt zich in kolom A
-            date_col = df.columns[0]
-            df['Datum'] = df[date_col].apply(parse_single_date)
+            # Kolom A is de datum
+            df['Datum'] = df.iloc[:, 0].apply(parse_single_date)
             df = df.dropna(subset=['Datum']).sort_values('Datum')
 
-            col_map = {}
-            for idx, col in enumerate(df.columns):
-                c_str = str(col).strip().replace(" ", "").replace("（", "(").replace("）", ")")
-                
-                if "站点roi" in c_str.lower() or idx == 3:  # Kolom D
-                    if 'ROI' not in col_map:
-                        col_map['ROI'] = col
-                elif ("含税" in c_str and "不含" not in c_str) or idx == 6:  # Kolom G: Marge % (Gross Margin)
-                    if 'GrossMargin_Tax' not in col_map:
-                        col_map['GrossMargin_Tax'] = col
-                elif "不含税" in c_str or "不含" in c_str or idx == 7:  # Kolom H: Winst $ (Gross Profit)
-                    if 'GrossProfit_NoTax' not in col_map:
-                        col_map['GrossProfit_NoTax'] = col
-                elif "fb来源占比" in c_str.lower() or ("fb" in c_str.lower() and "占比" in c_str) or idx == 23:  # Kolom X
-                    if 'FB_Share' not in col_map:
-                        col_map['FB_Share'] = col
-                elif ("fb归因roi" in c_str.lower()) or ("fb" in c_str.lower() and "roi" in c_str.lower() and "归因" in c_str) or idx == 30:  # Kolom AE
-                    if 'FB_Attributed_ROI' not in col_map:
-                        col_map['FB_Attributed_ROI'] = col
-                elif "cpm" in c_str.lower() or idx == 34:  # Kolom AI
-                    if 'FB_CPM' not in col_map:
-                        col_map['FB_CPM'] = col
+            # We mappen rechtstreeks op positie EN op naam ter redundancy
+            res = pd.DataFrame()
+            res['Datum'] = df['Datum']
 
-            df_clean = pd.DataFrame()
-            df_clean['Datum'] = df['Datum']
-            for standard_name, original_col in col_map.items():
-                # GrossProfit_NoTax is een geldbedrag ($), geen percentage!
-                if standard_name == 'GrossProfit_NoTax':
-                    is_pct = False
-                else:
-                    is_pct = any(k in str(original_col) for k in ['率', '占比', '%'])
-                df_clean[standard_name] = df[original_col].apply(lambda v: clean_number(v, is_pct=is_pct))
+            # 1. 站点ROI (Kolom D / index 3)
+            res['ROI'] = df.iloc[:, 3].apply(lambda v: clean_number(v, is_pct=False))
+            # 2. 毛利率（含税）(Kolom G / index 6)
+            res['GrossMargin_Tax'] = df.iloc[:, 6].apply(lambda v: clean_number(v, is_pct=True))
+            # 3. 毛利(不含税) (Kolom I / index 8 = 毛利润（不含税）in $, of Kolom H)
+            # Als kolom 8 getallen bevat, is dat de winst in $, anders kolom 7
+            val_col8 = df.iloc[:, 8].apply(lambda v: clean_number(v, is_pct=False))
+            if val_col8.notna().sum() > 0:
+                res['GrossProfit_NoTax'] = val_col8
+            else:
+                res['GrossProfit_NoTax'] = df.iloc[:, 7].apply(lambda v: clean_number(v, is_pct=False))
+            
+            # 4. FB来源占比 (Kolom X / index 23)
+            res['FB_Share'] = df.iloc[:, 23].apply(lambda v: clean_number(v, is_pct=True))
+            # 5. FB归因ROI (Kolom AE / index 30)
+            res['FB_Attributed_ROI'] = df.iloc[:, 30].apply(lambda v: clean_number(v, is_pct=False))
+            # 6. FB-CPM (Kolom AI / index 34)
+            res['FB_CPM'] = df.iloc[:, 34].apply(lambda v: clean_number(v, is_pct=False))
+            
+            # 7. Facebook CTR (Kolom AJ / index 35)
+            res['FB_CTR'] = df.iloc[:, 35].apply(lambda v: clean_number(v, is_pct=True))
+            # 8. Facebook Clicks (Kolom AK / index 36)
+            res['FB_Clicks'] = df.iloc[:, 36].apply(lambda v: clean_number(v, is_pct=False))
+            # 9. Facebook Views (Kolom AL / index 37)
+            res['FB_Views'] = df.iloc[:, 37].apply(lambda v: clean_number(v, is_pct=False))
 
-            return df_clean
+            return res
 
         clean_tot = process_tab(df_tot_raw)
         clean_nl = process_tab(df_nl_raw)
@@ -299,9 +281,9 @@ def load_nl_vs_total_data():
         if clean_tot.empty or clean_nl.empty:
             return pd.DataFrame()
 
-        df_comp = pd.merge(clean_nl, clean_tot, on='Datum', suffixes=('_NL', '_Total'), how='outer').sort_values('Datum')
+        df_comp = pd.merge(clean_nl, clean_tot, on='Datum', suffixes=('_NL', '_Total'), how='inner').sort_values('Datum')
         return df_comp
-    except Exception:
+    except Exception as e:
         return pd.DataFrame()
 
 def create_yoy_chart(df_merged, col, title, y_label, freq_code, color_current="#1f77b4", color_ly="#aec7e8"):
@@ -380,7 +362,7 @@ def create_comparison_3line_chart(df_in, metric_base, title, y_label, is_percent
     elif is_currency:
         hover_main = "$%{y:,.2f}"
     else:
-        hover_main = "%{y:.2f}"
+        hover_main = "%{y:,.0f}" if any(k in metric_base.lower() for k in ['clicks', 'views']) else "%{y:.2f}"
 
     if col_nl in df_in.columns:
         s_nl = df_in.dropna(subset=[col_nl])
@@ -423,7 +405,7 @@ def create_comparison_3line_chart(df_in, metric_base, title, y_label, is_percent
         hovermode="x unified",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         margin=dict(l=20, r=20, t=50, b=20),
-        height=400
+        height=380
     )
     fig.update_yaxes(title_text=y_label, secondary_y=False, rangemode="tozero")
     fig.update_yaxes(title_text="Ratio (NL vs Total %)", secondary_y=True, ticksuffix="%")
@@ -976,8 +958,7 @@ try:
                 comp_rules = {}
                 for c in filtered_comp.columns:
                     if c != 'Datum':
-                        # GrossProfit_NoTax optellen bij aggregatie, ratio's en marges middelen
-                        if 'GrossProfit' in c:
+                        if any(k in c for k in ['GrossProfit', 'FB_Clicks', 'FB_Views']):
                             comp_rules[c] = lambda s: s.sum(min_count=1)
                         else:
                             comp_rules[c] = 'mean'
@@ -985,6 +966,8 @@ try:
             else:
                 plot_comp = filtered_comp.copy()
 
+            # Sectie 1: Financiële KPI's & ROI
+            st.markdown("### 💰 Financiële & Marketing Efficiency Metrics")
             c1, c2 = st.columns(2)
             with c1:
                 st.plotly_chart(
@@ -995,7 +978,6 @@ try:
                     create_comparison_3line_chart(plot_comp, "GrossMargin_Tax", "毛利率（含税）(Gross Margin Incl. Tax)", "Margin (%)", is_percentage=True),
                     use_container_width=True
                 )
-                # AANGEPAST NAAR GROSS PROFIT (GELDBEDRAG IN PLAATS VAN MARGE)
                 st.plotly_chart(
                     create_comparison_3line_chart(plot_comp, "GrossProfit_NoTax", "毛利(不含税) (Gross Profit Excl. Tax)", "Gross Profit ($)", is_currency=True),
                     use_container_width=True
@@ -1012,6 +994,26 @@ try:
                 )
                 st.plotly_chart(
                     create_comparison_3line_chart(plot_comp, "FB_CPM", "FB-CPM (Facebook CPM)", "CPM ($)", is_currency=True),
+                    use_container_width=True
+                )
+
+            st.markdown("---")
+            # Sectie 2: Drie aparte grafieken voor Facebook Views, Clicks en CTR
+            st.markdown("### 📱 Facebook Traffic & Engagement Metrics")
+            f1, f2, f3 = st.columns(3)
+            with f1:
+                st.plotly_chart(
+                    create_comparison_3line_chart(plot_comp, "FB_Views", "Facebook Views (展示量: NL vs Total)", "Views (Count)"),
+                    use_container_width=True
+                )
+            with f2:
+                st.plotly_chart(
+                    create_comparison_3line_chart(plot_comp, "FB_Clicks", "Facebook Clicks (点击量: NL vs Total)", "Clicks (Count)"),
+                    use_container_width=True
+                )
+            with f3:
+                st.plotly_chart(
+                    create_comparison_3line_chart(plot_comp, "FB_CTR", "Facebook CTR (点击率: NL vs Total)", "CTR (%)", is_percentage=True),
                     use_container_width=True
                 )
 
