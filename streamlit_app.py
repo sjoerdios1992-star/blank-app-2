@@ -106,10 +106,9 @@ SHEET_URL_MAIN = "https://docs.google.com/spreadsheets/d/1GLAGMkVx5DMXylG0bbdvkz
 SHEET_URL_GSC = "https://docs.google.com/spreadsheets/d/1Qna6ZiJ3tlZzz9U2yL-qTwon3MFGOwRKFXmZGUIcXZ4/edit?gid=0#gid=0"
 
 # -------------------- HELPER FUNCTIONS --------------------
-def clean_number(val, is_pct=False, is_count=False):
+def clean_number(val, is_pct=False):
     """
-    Converteert getallen robuust.
-    Bij is_count=True (Clicks & Views) worden komma's ALTIJD als duizendtallen behandeld en gewist.
+    Standaard schone conversie: leest getallen direct uit zoals ze in de sheet staan.
     """
     if pd.isna(val):
         return np.nan
@@ -118,26 +117,16 @@ def clean_number(val, is_pct=False, is_count=False):
         num = float(val)
         if is_pct and 0 < abs(num) <= 1.0:
             num = num * 100
-        return round(num) if is_count else num
+        return num
 
     s_raw = str(val).strip()
     if not s_raw or s_raw.lower() in ['nan', 'none', '-', 'null', '', '—', '#error!', '#value!', '#ref!']:
         return np.nan
 
     has_pct_symbol = '%' in s_raw
-    s = s_raw.replace('$', '').replace('€', '').replace('%', '').strip()
-
-    if is_count:
-        # Altijd alle komma's verwijderen: 270,342 -> 270342, 6,047 -> 6047
-        s = s.replace(',', '').replace(' ', '')
-        try:
-            return float(int(float(s)))
-        except ValueError:
-            return np.nan
-
-    # Voor reguliere valuta en percentages:
-    # Komma's in Google Sheets zijn altijd Engelse duizendtallen
-    s = s.replace(',', '')
+    s = s_raw.replace('$', '').replace('€', '').replace('%', '').strip().replace(',', '')
+    if not s:
+        return np.nan
 
     try:
         num = float(s)
@@ -285,10 +274,10 @@ def load_nl_vs_total_data():
         
         # 7. Facebook CTR (Kolom AJ / index 35)
         res['FB_CTR'] = df.iloc[:, 35].apply(lambda v: clean_number(v, is_pct=True))
-        # 8. Facebook Clicks (Kolom AK / index 36) - gegarandeerd als duizendtal parsed
-        res['FB_Clicks'] = df.iloc[:, 36].apply(lambda v: clean_number(v, is_count=True))
-        # 9. Facebook Views (Kolom AL / index 37) - gegarandeerd als duizendtal parsed
-        res['FB_Views'] = df.iloc[:, 37].apply(lambda v: clean_number(v, is_count=True))
+        # 8. Facebook Clicks (Kolom AK / index 36) -> leest direct het getal zoals in sheet
+        res['FB_Clicks'] = df.iloc[:, 36].apply(lambda v: clean_number(v, is_pct=False))
+        # 9. Facebook Views (Kolom AL / index 37) -> leest direct het getal zoals in sheet
+        res['FB_Views'] = df.iloc[:, 37].apply(lambda v: clean_number(v, is_pct=False))
 
         return res
 
@@ -379,7 +368,7 @@ def create_comparison_3line_chart(df_in, metric_base, title, y_label, is_percent
     elif is_currency:
         hover_main = "$%{y:,.2f}"
     elif is_count_metric:
-        hover_main = "%{y:,.0f}"  # Altijd als geheel getal met duizendtallen
+        hover_main = "%{y:,.0f}"
     else:
         hover_main = "%{y:.2f}"
 
@@ -427,7 +416,6 @@ def create_comparison_3line_chart(df_in, metric_base, title, y_label, is_percent
         height=380
     )
     
-    # Y-assen formatteren
     if is_count_metric:
         fig.update_yaxes(title_text=y_label, secondary_y=False, rangemode="tozero", tickformat=",.0f")
     else:
