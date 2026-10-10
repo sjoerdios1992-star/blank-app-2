@@ -107,9 +107,6 @@ SHEET_URL_GSC = "https://docs.google.com/spreadsheets/d/1Qna6ZiJ3tlZzz9U2yL-qTwo
 
 # -------------------- HELPER FUNCTIONS --------------------
 def clean_number(val, is_pct=False):
-    """
-    Standaard schone conversie: leest getallen direct uit zoals ze in de sheet staan.
-    """
     if pd.isna(val):
         return np.nan
     
@@ -274,9 +271,9 @@ def load_nl_vs_total_data():
         
         # 7. Facebook CTR (Kolom AJ / index 35)
         res['FB_CTR'] = df.iloc[:, 35].apply(lambda v: clean_number(v, is_pct=True))
-        # 8. Facebook Clicks (Kolom AK / index 36) -> leest direct het getal zoals in sheet
+        # 8. Facebook Clicks (Kolom AK / index 36)
         res['FB_Clicks'] = df.iloc[:, 36].apply(lambda v: clean_number(v, is_pct=False))
-        # 9. Facebook Views (Kolom AL / index 37) -> leest direct het getal zoals in sheet
+        # 9. Facebook Views (Kolom AL / index 37)
         res['FB_Views'] = df.iloc[:, 37].apply(lambda v: clean_number(v, is_pct=False))
 
         return res
@@ -292,9 +289,9 @@ def load_nl_vs_total_data():
 
 def create_yoy_chart(df_merged, col, title, y_label, freq_code, color_current="#1f77b4", color_ly="#aec7e8"):
     fig = go.Figure()
-    is_percentage = "(%)" in y_label or "Percentage" in y_label or "Share" in y_label or any(k in col for k in ['率', '占比', '%'])
-    is_rank = "排名" in col or "Position" in col or "Rank" in col
-    is_currency = ("($)" in y_label or "Revenue" in title) and not is_percentage
+    is_percentage = "(%)" in y_label or "Percentage" in y_label or "Share" in y_label or any(k in str(col) for k in ['率', '占比', '%'])
+    is_rank = "排名" in str(col) or "Position" in str(col) or "Rank" in str(col)
+    is_currency = ("($)" in y_label or "Revenue" in title or "销售额" in str(col)) and not is_percentage
 
     if is_percentage:
         hover_template = "%{y:.2f}%"
@@ -521,15 +518,17 @@ try:
     else:
         merged_df = filtered_daily.copy()
 
+    # Robuuste Superset Total Revenue herkenning
     superset_tot_col = None
-    for c in ["Superset 网站总销售额", "Superset 总销售额", "Superset销售额"]:
-        if c in df.columns:
+    for c in df.columns:
+        c_clean = str(c).strip().replace(" ", "")
+        if "superset" in c_clean.lower() and "总销售额" in c_clean:
             superset_tot_col = c
             break
 
     if superset_tot_col is None:
-        for c in df.columns:
-            if "superset" in str(c).lower() and "总销售额" in str(c):
+        for c in ["Superset 网站总销售额", "Superset 总销售额", "Superset销售额"]:
+            if c in df.columns:
                 superset_tot_col = c
                 break
 
@@ -645,8 +644,11 @@ try:
         col_a, col_b = st.columns(2)
         with col_a:
             st.plotly_chart(create_yoy_chart(merged_df, "GA4 SEO销售额", "GA4 SEO Revenue (GA4 SEO销售额)", "Revenue ($)", freq_code, "#1f77b4"), use_container_width=True)
+            
+            # HIER STOND HET PROBLEEM: superset_tot_col wordt nu direct en gegarandeerd correct gerenderd
             if superset_tot_col and superset_tot_col in merged_df.columns:
-                st.plotly_chart(create_yoy_chart(merged_df, "Total Website Revenue", f"Total Website Revenue ({superset_tot_col})", "Revenue ($)", freq_code, "#2ca02c"), use_container_width=True)
+                st.plotly_chart(create_yoy_chart(merged_df, superset_tot_col, f"Total Website Revenue ({superset_tot_col})", "Revenue ($)", freq_code, "#2ca02c"), use_container_width=True)
+            
             st.plotly_chart(create_yoy_chart(merged_df, "Superset_Share_Calculated", "Superset SEO Revenue Share (Superset SEO销售额占比)", "Percentage (%)", freq_code, "#9467bd"), use_container_width=True)
         with col_b:
             st.plotly_chart(create_yoy_chart(merged_df, "Superset SEO销售额", "Superset SEO Revenue (Superset SEO销售额)", "Revenue ($)", freq_code, "#ff7f0e"), use_container_width=True)
