@@ -251,7 +251,6 @@ def load_nl_vs_total_data():
         res = pd.DataFrame()
         res['Datum'] = df['Datum']
 
-        # Kolommen mappen
         res['ROI'] = df.iloc[:, 3].apply(lambda v: clean_number(v, is_pct=False))
         res['GrossMargin_Tax'] = df.iloc[:, 6].apply(lambda v: clean_number(v, is_pct=True))
         
@@ -883,32 +882,34 @@ try:
                 col_title_b = f"周期 B ({sel_pb_start.strftime('%y/%m/%d')} - {sel_pb_end.strftime('%y/%m/%d')})"
                 col_title_change = "变化率 (% Change)"
 
-                # EXACT MATCHING NAAR JOUW SPECIFICATIE
-                def find_sheet_col(target_patterns):
+                # EXACT MATCHING OP BASIS VAN JE ECHTE SHEET-KOLOMMEN (INDEX & SYNONIEMEN)
+                def find_sheet_col(target_patterns, default_idx=None):
                     for col in gsc_numeric_cols:
                         c_clean = str(col).strip().replace(" ", "").replace("（", "(").replace("）", ")").lower()
                         for p in target_patterns:
                             p_clean = p.strip().replace(" ", "").replace("（", "(").replace("）", ")").lower()
-                            if c_clean == p_clean:
+                            if p_clean in c_clean or c_clean == p_clean:
                                 return col
+                    if default_idx is not None and default_idx < len(df_gsc.columns):
+                        return df_gsc.columns[default_idx]
                     return None
 
                 ordered_definitions = [
-                    ("销售额（Superset）", ["销售额（Superset）", "销售额(Superset)"]),
-                    ("流量（GA4）", ["流量（GA4）", "流量(GA4)"]),
-                    ("流量（Blog）", ["流量（Blog）", "流量(Blog)"]),
-                    ("流量（站内）", ["流量（站内）", "流量(站内)"]),
-                    ("流量（AI assistant）", ["流量（AI assistant）", "流量(AI assistant)", "流量（AIassistant）"]),
-                    ("销售额（AI assistant）", ["销售额（AI assistant）", "销售额(AI assistant)", "销售额（AIassistant）"]),
-                    ("点击（GSC）", ["点击", "点击（GSC）", "点击(GSC)"]),
-                    ("AI Performance（总）", ["AI Performance（总）", "AI Performance(总)"]),
-                    ("AI Performance（非Blog）", ["AI Performance（非 blog）", "AI Performance(非 blog)", "AI Performance（非Blog）", "AI Performance(非Blog)"]),
-                    ("AI Performance（Blog）", ["AI Performance（blog）", "AI Performance(blog)", "AI Performance（Blog）"]),
-                    ("点击（非品牌词）", ["点击 （非品牌词）", "点击（非品牌词）", "点击(非品牌词)"]),
-                    ("点击（Blog）", ["blog 点击", "blog点击", "点击（Blog）", "点击(Blog)"]),
-                    ("点击（非Blog）", ["点击 (非blog)", "点击(非blog)", "点击（非blog）", "点击（非Blog）"]),
-                    ("点击（非品牌词非Blog）", ["点击（非品牌词非blog）", "点击(非品牌词非blog)", "点击（非品牌词非Blog）"]),
-                    ("点击（非品牌词非Blog非utm）(/blog|utm_)", ["点击（非品牌词非Blog非utm）", "点击(非品牌词非Blog非utm)", "点击（非品牌词非Blog非utm）(/blog|utm_)"])
+                    ("销售额（Superset）", ["销售额（superset）", "销售额(superset)"], 13),
+                    ("流量（GA4）", ["流量（ga4）", "流量(ga4)"], 14),
+                    ("流量（Blog）", ["流量（blog）", "流量(blog)"], 15),
+                    ("流量（站内）", ["流量（站内）", "流量(站内)"], 16),
+                    ("流量（AI assistant）", ["流量（aiassistant）", "流量(aiassistant)", "aiassistant流量"], 17),
+                    ("销售额（AI assistant）", ["销售额（aiassistant）", "销售额(aiassistant)", "aiassistant销售额"], 18),
+                    ("点击（GSC）", ["点击", "点击（gsc）", "点击(gsc)"], 1),
+                    ("AI Performance（总）", ["aiperformance（总）", "aiperformance(总)"], 10),
+                    ("AI Performance（非Blog）", ["aiperformance（非blog）", "aiperformance(非blog)"], 11),
+                    ("AI Performance（Blog）", ["aiperformance（blog）", "aiperformance(blog)"], 12),
+                    ("点击（非品牌词）", ["点击（非品牌词）", "点击(非品牌词)"], 5),
+                    ("点击（Blog）", ["blog点击", "blog点击", "点击（blog）", "点击(blog)"], 6),
+                    ("点击（非Blog）", ["点击(非blog)", "点击（非blog）"], 7),
+                    ("点击（非品牌词非Blog）", ["点击（非品牌词非blog）", "点击(非品牌词非blog)"], 8),
+                    ("点击（非品牌词非Blog非utm）(/blog|utm_)", ["点击（非品牌词非blog非utm）", "点击(非品牌词非blog非utm)"], 9)
                 ]
 
                 table_data = []
@@ -916,8 +917,8 @@ try:
                 is_pos_list = []
                 matched_cols_set = set()
 
-                for display_label, patterns in ordered_definitions:
-                    real_col = find_sheet_col(patterns)
+                for display_label, patterns, def_idx in ordered_definitions:
+                    real_col = find_sheet_col(patterns, def_idx)
                     if real_col is not None and real_col in df_gsc.columns:
                         matched_cols_set.add(real_col)
                         is_pct = any(k in str(real_col).lower() for k in ['%', 'ctr', 'rate', '率', '占比'])
@@ -927,6 +928,7 @@ try:
                         val_a = df_pa[real_col].mean(skipna=True) if (is_pct or is_pos) else df_pa[real_col].sum(skipna=True) if not df_pa.empty else np.nan
                         val_b = df_pb[real_col].mean(skipna=True) if (is_pct or is_pos) else df_pb[real_col].sum(skipna=True) if not df_pb.empty else np.nan
 
+                        # Bereken verschil en percentage
                         if pd.notna(val_a) and pd.notna(val_b):
                             diff_val = val_b - val_a
                             if is_pct:
@@ -940,18 +942,29 @@ try:
                             diff_val = np.nan
                             growth_str = "—"
 
-                        if is_pct:
-                            str_a = f"{val_a:.2f}%" if pd.notna(val_a) else "—"
-                            str_b = f"{val_b:.2f}%" if pd.notna(val_b) else "—"
+                        # Formatteer A
+                        if pd.isna(val_a):
+                            str_a = "—"
+                        elif is_pct:
+                            str_a = f"{val_a:.2f}%"
                         elif is_pos:
-                            str_a = f"{val_a:.1f}" if pd.notna(val_a) else "—"
-                            str_b = f"{val_b:.1f}" if pd.notna(val_b) else "—"
+                            str_a = f"{val_a:.1f}"
                         elif is_curr:
-                            str_a = f"${val_a:,.2f}" if pd.notna(val_a) else "—"
-                            str_b = f"${val_b:,.2f}" if pd.notna(val_b) else "—"
+                            str_a = f"${val_a:,.2f}"
                         else:
-                            str_a = f"{int(val_a):,}" if pd.notna(val_a) else "—"
-                            str_b = f"{int(val_b):,}" if pd.notna(val_b) else "—"
+                            str_a = f"{int(val_a):,}"
+
+                        # Formatteer B
+                        if pd.isna(val_b):
+                            str_b = "—"
+                        elif is_pct:
+                            str_b = f"{val_b:.2f}%"
+                        elif is_pos:
+                            str_b = f"{val_b:.1f}"
+                        elif is_curr:
+                            str_b = f"${val_b:,.2f}"
+                        else:
+                            str_b = f"{int(val_b):,}"
 
                         table_data.append({
                             "指标 (Metric)": display_label,
@@ -962,7 +975,7 @@ try:
                         diff_numeric_list.append(diff_val)
                         is_pos_list.append(is_pos)
 
-                # Eventuele overige kolommen (zoals 展示, 点击率, 排名) toevoegen onderaan
+                # Overige kolommen onderaan (bijv. 展示, 点击率, 排名)
                 for c in gsc_numeric_cols:
                     if c not in matched_cols_set and not str(c).startswith("Unnamed"):
                         is_pct = any(k in str(c).lower() for k in ['%', 'ctr', 'rate', '率', '占比'])
