@@ -222,11 +222,11 @@ def load_gsc_weekly_data():
         for col in df_gsc.columns:
             if col not in ['Datum', date_col_name]:
                 col_name_str = str(col).strip()
+                if not col_name_str or col_name_str.startswith("Unnamed"):
+                    continue
                 is_pct = any(k in col_name_str.lower() for k in ['%', 'ctr', 'rate', '率', '占比'])
-                converted = df_gsc[col].apply(lambda v: clean_number(v, is_pct=is_pct))
-                if converted.notna().sum() > 0:
-                    df_gsc[col] = converted
-                    gsc_numeric_cols.append(col)
+                df_gsc[col] = df_gsc[col].apply(lambda v: clean_number(v, is_pct=is_pct))
+                gsc_numeric_cols.append(col)
 
         return df_gsc.sort_values('Datum'), gsc_numeric_cols
     except Exception:
@@ -244,7 +244,6 @@ def load_nl_vs_total_data():
             return pd.DataFrame()
         df = df_in.copy()
         
-        # Kolom A is de datum
         df['Datum'] = df.iloc[:, 0].apply(parse_single_date)
         df = df.dropna(subset=['Datum']).sort_values('Datum')
         df['Datum'] = pd.to_datetime(df['Datum'].dt.date)
@@ -252,28 +251,20 @@ def load_nl_vs_total_data():
         res = pd.DataFrame()
         res['Datum'] = df['Datum']
 
-        # 1. 站点ROI (Kolom D / index 3)
+        # Kolommen mappen
         res['ROI'] = df.iloc[:, 3].apply(lambda v: clean_number(v, is_pct=False))
-        # 2. 毛利率（含税）(Kolom G / index 6)
         res['GrossMargin_Tax'] = df.iloc[:, 6].apply(lambda v: clean_number(v, is_pct=True))
-        # 3. 毛利(不含税) (Kolom I / index 8 = bedrag in $, anders Kolom H / index 7)
+        
         if df.shape[1] > 8 and df.iloc[:, 8].apply(lambda v: clean_number(v, is_pct=False)).notna().sum() > 0:
             res['GrossProfit_NoTax'] = df.iloc[:, 8].apply(lambda v: clean_number(v, is_pct=False))
         else:
             res['GrossProfit_NoTax'] = df.iloc[:, 7].apply(lambda v: clean_number(v, is_pct=False))
         
-        # 4. FB来源占比 (Kolom X / index 23)
         res['FB_Share'] = df.iloc[:, 23].apply(lambda v: clean_number(v, is_pct=True))
-        # 5. FB归因ROI (Kolom AE / index 30)
         res['FB_Attributed_ROI'] = df.iloc[:, 30].apply(lambda v: clean_number(v, is_pct=False))
-        # 6. FB-CPM (Kolom AI / index 34)
         res['FB_CPM'] = df.iloc[:, 34].apply(lambda v: clean_number(v, is_pct=False))
-        
-        # 7. Facebook CTR (Kolom AJ / index 35)
         res['FB_CTR'] = df.iloc[:, 35].apply(lambda v: clean_number(v, is_pct=True))
-        # 8. Facebook Clicks (Kolom AK / index 36)
         res['FB_Clicks'] = df.iloc[:, 36].apply(lambda v: clean_number(v, is_pct=False))
-        # 9. Facebook Views (Kolom AL / index 37)
         res['FB_Views'] = df.iloc[:, 37].apply(lambda v: clean_number(v, is_pct=False))
 
         return res
@@ -518,7 +509,6 @@ try:
     else:
         merged_df = filtered_daily.copy()
 
-    # Robuuste Superset Total Revenue herkenning
     superset_tot_col = None
     for c in df.columns:
         c_clean = str(c).strip().replace(" ", "")
@@ -644,11 +634,8 @@ try:
         col_a, col_b = st.columns(2)
         with col_a:
             st.plotly_chart(create_yoy_chart(merged_df, "GA4 SEO销售额", "GA4 SEO Revenue (GA4 SEO销售额)", "Revenue ($)", freq_code, "#1f77b4"), use_container_width=True)
-            
-            # HIER STOND HET PROBLEEM: superset_tot_col wordt nu direct en gegarandeerd correct gerenderd
             if superset_tot_col and superset_tot_col in merged_df.columns:
                 st.plotly_chart(create_yoy_chart(merged_df, superset_tot_col, f"Total Website Revenue ({superset_tot_col})", "Revenue ($)", freq_code, "#2ca02c"), use_container_width=True)
-            
             st.plotly_chart(create_yoy_chart(merged_df, "Superset_Share_Calculated", "Superset SEO Revenue Share (Superset SEO销售额占比)", "Percentage (%)", freq_code, "#9467bd"), use_container_width=True)
         with col_b:
             st.plotly_chart(create_yoy_chart(merged_df, "Superset SEO销售额", "Superset SEO Revenue (Superset SEO销售额)", "Revenue ($)", freq_code, "#ff7f0e"), use_container_width=True)
@@ -786,6 +773,7 @@ try:
                 for col_idx, col_name in enumerate(row_metrics):
                     is_pct = any(k in str(col_name).lower() for k in ['%', 'ctr', 'rate', '率', '占比'])
                     is_pos = any(k in str(col_name).lower() for k in ['排名', 'position', 'rank'])
+                    is_curr = any(k in str(col_name).lower() for k in ['销售额', 'revenue', '$'])
                     
                     c_val = filtered_gsc_daily[col_name].mean(skipna=True) if (is_pct or is_pos) else filtered_gsc_daily[col_name].sum(skipna=True)
                     
@@ -808,6 +796,11 @@ try:
                             d_str = f"{(c_val - ly_val):+.1f} pts vs 去年" if ly_val is not None else None
                             st.metric(str(col_name), v_str, d_str, delta_color="inverse")
                             st.caption(f"去年: {ly_val:.1f}" if ly_val is not None else "去年: —")
+                        elif is_curr:
+                            v_str = f"${c_val:,.2f}" if pd.notna(c_val) else "—"
+                            d_str = format_kpi_delta(c_val - ly_val, ly_val, is_currency=True) if ly_val is not None else None
+                            st.metric(str(col_name), v_str, d_str)
+                            st.caption(f"去年: ${ly_val:,.2f}" if ly_val is not None else "去年: —")
                         else:
                             v_str = f"{int(c_val):,}" if pd.notna(c_val) else "—"
                             d_str = format_kpi_delta(c_val - ly_val, ly_val) if ly_val is not None else None
@@ -827,8 +820,9 @@ try:
                     with chart_cols[c_idx]:
                         is_pct = any(k in str(col_name).lower() for k in ['%', 'ctr', 'rate', '率', '占比'])
                         is_pos = any(k in str(col_name).lower() for k in ['排名', 'position', 'rank'])
+                        is_curr = any(k in str(col_name).lower() for k in ['销售额', 'revenue', '$'])
                         
-                        y_label = "Percentage (%)" if is_pct else ("Average Position" if is_pos else "Count / Total")
+                        y_label = "Percentage (%)" if is_pct else ("Average Position" if is_pos else ("Revenue ($)" if is_curr else "Count / Total"))
                         st.plotly_chart(
                             create_yoy_chart(
                                 merged_gsc_df, 
@@ -889,55 +883,113 @@ try:
                 col_title_b = f"周期 B ({sel_pb_start.strftime('%y/%m/%d')} - {sel_pb_end.strftime('%y/%m/%d')})"
                 col_title_change = "变化率 (% Change)"
 
+                # EXACT MATCHING NAAR JOUW SPECIFICATIE
+                def find_sheet_col(target_patterns):
+                    for col in gsc_numeric_cols:
+                        c_clean = str(col).strip().replace(" ", "").replace("（", "(").replace("）", ")").lower()
+                        for p in target_patterns:
+                            p_clean = p.strip().replace(" ", "").replace("（", "(").replace("）", ")").lower()
+                            if c_clean == p_clean:
+                                return col
+                    return None
+
+                ordered_definitions = [
+                    ("销售额（Superset）", ["销售额（Superset）", "销售额(Superset)"]),
+                    ("流量（GA4）", ["流量（GA4）", "流量(GA4)"]),
+                    ("流量（Blog）", ["流量（Blog）", "流量(Blog)"]),
+                    ("流量（站内）", ["流量（站内）", "流量(站内)"]),
+                    ("流量（AI assistant）", ["流量（AI assistant）", "流量(AI assistant)", "流量（AIassistant）"]),
+                    ("销售额（AI assistant）", ["销售额（AI assistant）", "销售额(AI assistant)", "销售额（AIassistant）"]),
+                    ("点击（GSC）", ["点击", "点击（GSC）", "点击(GSC)"]),
+                    ("AI Performance（总）", ["AI Performance（总）", "AI Performance(总)"]),
+                    ("AI Performance（非Blog）", ["AI Performance（非 blog）", "AI Performance(非 blog)", "AI Performance（非Blog）", "AI Performance(非Blog)"]),
+                    ("AI Performance（Blog）", ["AI Performance（blog）", "AI Performance(blog)", "AI Performance（Blog）"]),
+                    ("点击（非品牌词）", ["点击 （非品牌词）", "点击（非品牌词）", "点击(非品牌词)"]),
+                    ("点击（Blog）", ["blog 点击", "blog点击", "点击（Blog）", "点击(Blog)"]),
+                    ("点击（非Blog）", ["点击 (非blog)", "点击(非blog)", "点击（非blog）", "点击（非Blog）"]),
+                    ("点击（非品牌词非Blog）", ["点击（非品牌词非blog）", "点击(非品牌词非blog)", "点击（非品牌词非Blog）"]),
+                    ("点击（非品牌词非Blog非utm）(/blog|utm_)", ["点击（非品牌词非Blog非utm）", "点击(非品牌词非Blog非utm)", "点击（非品牌词非Blog非utm）(/blog|utm_)"])
+                ]
+
                 table_data = []
                 diff_numeric_list = []
                 is_pos_list = []
+                matched_cols_set = set()
 
-                for metric in gsc_numeric_cols:
-                    is_pct = any(k in str(metric).lower() for k in ['%', 'ctr', 'rate', '率', '占比'])
-                    is_pos = any(k in str(metric).lower() for k in ['排名', 'position', 'rank'])
+                for display_label, patterns in ordered_definitions:
+                    real_col = find_sheet_col(patterns)
+                    if real_col is not None and real_col in df_gsc.columns:
+                        matched_cols_set.add(real_col)
+                        is_pct = any(k in str(real_col).lower() for k in ['%', 'ctr', 'rate', '率', '占比'])
+                        is_pos = any(k in str(real_col).lower() for k in ['排名', 'position', 'rank'])
+                        is_curr = any(k in str(real_col).lower() for k in ['销售额', 'revenue', '$'])
 
-                    if not df_pa.empty and metric in df_pa.columns:
-                        val_a = df_pa[metric].mean(skipna=True) if (is_pct or is_pos) else df_pa[metric].sum(skipna=True)
-                    else:
-                        val_a = np.nan
+                        val_a = df_pa[real_col].mean(skipna=True) if (is_pct or is_pos) else df_pa[real_col].sum(skipna=True) if not df_pa.empty else np.nan
+                        val_b = df_pb[real_col].mean(skipna=True) if (is_pct or is_pos) else df_pb[real_col].sum(skipna=True) if not df_pb.empty else np.nan
 
-                    if not df_pb.empty and metric in df_pb.columns:
-                        val_b = df_pb[metric].mean(skipna=True) if (is_pct or is_pos) else df_pb[metric].sum(skipna=True)
-                    else:
-                        val_b = np.nan
-
-                    if pd.notna(val_a) and pd.notna(val_b):
-                        diff_val = val_b - val_a
-                        if is_pct:
-                            growth_str = f"{diff_val:+.2f}% pt"
-                        elif val_a != 0:
-                            pct_gr = (diff_val / val_a) * 100
-                            growth_str = f"{pct_gr:+.2f}%"
+                        if pd.notna(val_a) and pd.notna(val_b):
+                            diff_val = val_b - val_a
+                            if is_pct:
+                                growth_str = f"{diff_val:+.2f}% pt"
+                            elif val_a != 0:
+                                pct_gr = (diff_val / val_a) * 100
+                                growth_str = f"{pct_gr:+.2f}%"
+                            else:
+                                growth_str = "—"
                         else:
+                            diff_val = np.nan
                             growth_str = "—"
-                    else:
-                        diff_val = np.nan
-                        growth_str = "—"
 
-                    if is_pct:
-                        str_a = f"{val_a:.2f}%" if pd.notna(val_a) else "—"
-                        str_b = f"{val_b:.2f}%" if pd.notna(val_b) else "—"
-                    elif is_pos:
-                        str_a = f"{val_a:.1f}" if pd.notna(val_a) else "—"
-                        str_b = f"{val_b:.1f}" if pd.notna(val_b) else "—"
-                    else:
-                        str_a = f"{int(val_a):,}" if pd.notna(val_a) else "—"
-                        str_b = f"{int(val_b):,}" if pd.notna(val_b) else "—"
+                        if is_pct:
+                            str_a = f"{val_a:.2f}%" if pd.notna(val_a) else "—"
+                            str_b = f"{val_b:.2f}%" if pd.notna(val_b) else "—"
+                        elif is_pos:
+                            str_a = f"{val_a:.1f}" if pd.notna(val_a) else "—"
+                            str_b = f"{val_b:.1f}" if pd.notna(val_b) else "—"
+                        elif is_curr:
+                            str_a = f"${val_a:,.2f}" if pd.notna(val_a) else "—"
+                            str_b = f"${val_b:,.2f}" if pd.notna(val_b) else "—"
+                        else:
+                            str_a = f"{int(val_a):,}" if pd.notna(val_a) else "—"
+                            str_b = f"{int(val_b):,}" if pd.notna(val_b) else "—"
 
-                    table_data.append({
-                        "指标 (Metric)": str(metric),
-                        col_title_a: str_a,
-                        col_title_b: str_b,
-                        col_title_change: growth_str
-                    })
-                    diff_numeric_list.append(diff_val)
-                    is_pos_list.append(is_pos)
+                        table_data.append({
+                            "指标 (Metric)": display_label,
+                            col_title_a: str_a,
+                            col_title_b: str_b,
+                            col_title_change: growth_str
+                        })
+                        diff_numeric_list.append(diff_val)
+                        is_pos_list.append(is_pos)
+
+                # Eventuele overige kolommen (zoals 展示, 点击率, 排名) toevoegen onderaan
+                for c in gsc_numeric_cols:
+                    if c not in matched_cols_set and not str(c).startswith("Unnamed"):
+                        is_pct = any(k in str(c).lower() for k in ['%', 'ctr', 'rate', '率', '占比'])
+                        is_pos = any(k in str(c).lower() for k in ['排名', 'position', 'rank'])
+                        is_curr = any(k in str(c).lower() for k in ['销售额', 'revenue', '$'])
+
+                        val_a = df_pa[c].mean(skipna=True) if (is_pct or is_pos) else df_pa[c].sum(skipna=True) if not df_pa.empty else np.nan
+                        val_b = df_pb[c].mean(skipna=True) if (is_pct or is_pos) else df_pb[c].sum(skipna=True) if not df_pb.empty else np.nan
+
+                        if pd.notna(val_a) and pd.notna(val_b):
+                            diff_val = val_b - val_a
+                            growth_str = f"{diff_val:+.2f}% pt" if is_pct else (f"{(diff_val / val_a * 100):+.2f}%" if val_a != 0 else "—")
+                        else:
+                            diff_val = np.nan
+                            growth_str = "—"
+
+                        str_a = f"{val_a:.2f}%" if is_pct else (f"{val_a:.1f}" if is_pos else (f"${val_a:,.2f}" if is_curr else f"{int(val_a):,}")) if pd.notna(val_a) else "—"
+                        str_b = f"{val_b:.2f}%" if is_pct else (f"{val_b:.1f}" if is_pos else (f"${val_b:,.2f}" if is_curr else f"{int(val_b):,}")) if pd.notna(val_b) else "—"
+
+                        table_data.append({
+                            "指标 (Metric)": str(c),
+                            col_title_a: str_a,
+                            col_title_b: str_b,
+                            col_title_change: growth_str
+                        })
+                        diff_numeric_list.append(diff_val)
+                        is_pos_list.append(is_pos)
 
                 summary_df = pd.DataFrame(table_data)
 
