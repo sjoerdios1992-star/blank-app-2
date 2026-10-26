@@ -233,7 +233,7 @@ def load_gsc_weekly_data():
         return pd.DataFrame(), []
 
 # -------------------- LOAD SHEET 3 (NL VS TOTAL COMPARISON TABS) --------------------
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=10)
 def load_nl_vs_total_data():
     conn = st.connection("gsheets", type=GSheetsConnection)
     df_tot_raw = conn.read(spreadsheet=SHEET_URL_GSC, worksheet="Total website all data")
@@ -434,27 +434,27 @@ try:
         ["Daily (日)", "Weekly (周)", "Monthly (月)", "Quarterly (季)", "Yearly (年)"]
     )
 
-    # DYNAMISCH BEPALEN VAN DE MAXIMALE DATUM OVER ALLE BRONNEN HEEN
-    all_dates = []
+    # DYNAMISCH BEPALEN VAN DE EINDDATUM OVER ALLE BRONNEN
+    all_max_dates = []
     if not df.empty and 'Datum' in df.columns:
-        all_dates.append(df['Datum'].max().date())
+        all_max_dates.append(df['Datum'].max().date())
     if not df_gsc.empty and 'Datum' in df_gsc.columns:
-        all_dates.append(df_gsc['Datum'].max().date())
+        all_max_dates.append(df_gsc['Datum'].max().date())
     if not df_comparison.empty and 'Datum' in df_comparison.columns:
-        all_dates.append(df_comparison['Datum'].max().date())
+        all_max_dates.append(df_comparison['Datum'].max().date())
 
-    max_data_date = max(all_dates) if all_dates else datetime.date.today()
+    global_max_date = max(all_max_dates) if all_max_dates else datetime.date.today()
     min_date = df['Datum'].min().date()
 
-    # Standaard einddatum direct instellen op de meest recente datum in je data
-    default_end = max_data_date
+    # Standaard datumselectie: tot en met de nieuwste beschikbare datum
+    default_end = global_max_date
     default_start = max(default_end - pd.Timedelta(days=30), min_date)
 
     col_s1, col_s2 = st.sidebar.columns(2)
     with col_s1:
-        start_date = st.date_input("Start Date:", value=default_start, min_value=min_date, max_value=max_data_date)
+        start_date = st.date_input("Start Date:", value=default_start, min_value=min_date, max_value=global_max_date)
     with col_s2:
-        end_date = st.date_input("End Date:", value=default_end, min_value=min_date, max_value=max_data_date)
+        end_date = st.date_input("End Date:", value=default_end, min_value=min_date, max_value=global_max_date)
 
     if start_date > end_date:
         st.sidebar.error("⚠️ Start Date cannot be after End Date.")
@@ -1033,10 +1033,13 @@ try:
         if df_comparison.empty:
             st.warning("⚠️ Geen gegevens gevonden in tabbladen 'Total website all data' of 'Dutch website all data'. Controleer of de namen exact overeenkomen in Google Sheets.")
         else:
-            # Filter op geselecteerde startdatum tot de maximale datum in df_comparison
+            # GEEN BEPERKING OP DE EINDDATUM VOOR TAB 5: altijd doortrekken tot de nieuwste datum in df_comparison
+            comp_latest = df_comparison['Datum'].max().date()
+            eff_end = max(end_date, comp_latest)
+
             filtered_comp = df_comparison[
                 (df_comparison['Datum'].dt.date >= filter_start) & 
-                (df_comparison['Datum'].dt.date <= end_date)
+                (df_comparison['Datum'].dt.date <= eff_end)
             ].copy()
 
             if freq_code != "D" and not filtered_comp.empty:
