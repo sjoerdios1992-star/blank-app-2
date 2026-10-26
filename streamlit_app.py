@@ -434,16 +434,20 @@ try:
         ["Daily (日)", "Weekly (周)", "Monthly (月)", "Quarterly (季)", "Yearly (年)"]
     )
 
-    df_valid_dates = df.dropna(how='all', subset=numeric_cols)
-    max_data_date = df_valid_dates['Datum'].max().date() if not df_valid_dates.empty else df['Datum'].max().date()
+    # DYNAMISCH BEPALEN VAN DE MAXIMALE DATUM OVER ALLE BRONNEN HEEN
+    all_dates = []
+    if not df.empty and 'Datum' in df.columns:
+        all_dates.append(df['Datum'].max().date())
+    if not df_gsc.empty and 'Datum' in df_gsc.columns:
+        all_dates.append(df_gsc['Datum'].max().date())
+    if not df_comparison.empty and 'Datum' in df_comparison.columns:
+        all_dates.append(df_comparison['Datum'].max().date())
+
+    max_data_date = max(all_dates) if all_dates else datetime.date.today()
     min_date = df['Datum'].min().date()
 
-    today_date = pd.Timestamp.now().date()
-    target_end = today_date - pd.Timedelta(days=2)
-    default_end = min(target_end, max_data_date)
-    if default_end < min_date:
-        default_end = max_data_date
-
+    # Standaard einddatum direct instellen op de meest recente datum in je data
+    default_end = max_data_date
     default_start = max(default_end - pd.Timedelta(days=30), min_date)
 
     col_s1, col_s2 = st.sidebar.columns(2)
@@ -882,7 +886,6 @@ try:
                 col_title_b = f"周期 B ({sel_pb_start.strftime('%y/%m/%d')} - {sel_pb_end.strftime('%y/%m/%d')})"
                 col_title_change = "变化率 (% Change)"
 
-                # EXACT MATCHING OP BASIS VAN JE ECHTE SHEET-KOLOMMEN (INDEX & SYNONIEMEN)
                 def find_sheet_col(target_patterns, default_idx=None):
                     for col in gsc_numeric_cols:
                         c_clean = str(col).strip().replace(" ", "").replace("（", "(").replace("）", ")").lower()
@@ -928,7 +931,6 @@ try:
                         val_a = df_pa[real_col].mean(skipna=True) if (is_pct or is_pos) else df_pa[real_col].sum(skipna=True) if not df_pa.empty else np.nan
                         val_b = df_pb[real_col].mean(skipna=True) if (is_pct or is_pos) else df_pb[real_col].sum(skipna=True) if not df_pb.empty else np.nan
 
-                        # Bereken verschil en percentage
                         if pd.notna(val_a) and pd.notna(val_b):
                             diff_val = val_b - val_a
                             if is_pct:
@@ -942,7 +944,6 @@ try:
                             diff_val = np.nan
                             growth_str = "—"
 
-                        # Formatteer A
                         if pd.isna(val_a):
                             str_a = "—"
                         elif is_pct:
@@ -954,7 +955,6 @@ try:
                         else:
                             str_a = f"{int(val_a):,}"
 
-                        # Formatteer B
                         if pd.isna(val_b):
                             str_b = "—"
                         elif is_pct:
@@ -975,7 +975,6 @@ try:
                         diff_numeric_list.append(diff_val)
                         is_pos_list.append(is_pos)
 
-                # Overige kolommen onderaan (bijv. 展示, 点击率, 排名)
                 for c in gsc_numeric_cols:
                     if c not in matched_cols_set and not str(c).startswith("Unnamed"):
                         is_pct = any(k in str(c).lower() for k in ['%', 'ctr', 'rate', '率', '占比'])
@@ -1034,9 +1033,13 @@ try:
         if df_comparison.empty:
             st.warning("⚠️ Geen gegevens gevonden in tabbladen 'Total website all data' of 'Dutch website all data'. Controleer of de namen exact overeenkomen in Google Sheets.")
         else:
+            # GEBRUIK DE RECENTE DATUMS RECHTSTREEKS UIT DE VERGELIJKINGSDATASET
+            comp_max_date = df_comparison['Datum'].max().date()
+            eff_end_date = max(end_date, comp_max_date)
+
             filtered_comp = df_comparison[
                 (df_comparison['Datum'].dt.date >= filter_start) & 
-                (df_comparison['Datum'].dt.date <= end_date)
+                (df_comparison['Datum'].dt.date <= eff_end_date)
             ].copy()
 
             if freq_code != "D" and not filtered_comp.empty:
