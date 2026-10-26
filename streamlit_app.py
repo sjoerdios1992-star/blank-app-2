@@ -1033,13 +1033,10 @@ try:
         if df_comparison.empty:
             st.warning("⚠️ Geen gegevens gevonden in tabbladen 'Total website all data' of 'Dutch website all data'. Controleer of de namen exact overeenkomen in Google Sheets.")
         else:
-            # GEBRUIK DE RECENTE DATUMS RECHTSTREEKS UIT DE VERGELIJKINGSDATASET
-            comp_max_date = df_comparison['Datum'].max().date()
-            eff_end_date = max(end_date, comp_max_date)
-
+            # Filter op geselecteerde startdatum tot de maximale datum in df_comparison
             filtered_comp = df_comparison[
                 (df_comparison['Datum'].dt.date >= filter_start) & 
-                (df_comparison['Datum'].dt.date <= eff_end_date)
+                (df_comparison['Datum'].dt.date <= end_date)
             ].copy()
 
             if freq_code != "D" and not filtered_comp.empty:
