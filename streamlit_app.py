@@ -837,26 +837,18 @@ try:
                             use_container_width=True
                         )
 
-            # -------------------- 数据概览：周期自定义对比 (DATA OVERVIEW - WEEK OVER WEEK) --------------------
+            # -------------------- 数据概览：周期自定义对比 (DATA OVERVIEW: WOW) --------------------
             st.markdown("---")
-            st.subheader("📋 数据概览 — 周期对比 (Data Overview: WoW)")
-            st.caption("Vergelijking tussen de afgelopen week (-2 dagen, tot en met eergisteren) en de week daarvoor. De datums kunnen naar wens handmatig worden aangepast.")
+            st.subheader("📋 数据概览 — 周期对比 (Data Overview)")
 
             min_gsc_date = df_gsc['Datum'].min().date()
             max_gsc_date = df_gsc['Datum'].max().date()
 
-            # Bepaal Periode B: Afgelopen week t/m eergisteren
-            today_actual = datetime.date.today()
-            target_eergisteren = today_actual - datetime.timedelta(days=2)
-            
-            # Indien de sheet nieuwere data heeft dan eergisteren of juist achterloopt:
-            pb_end_calc = min(target_eergisteren, max_gsc_date)
-            if pb_end_calc < min_gsc_date:
-                pb_end_calc = max_gsc_date
-            
+            # Week-over-Week standaard berekening
+            target_eergisteren = datetime.date.today() - datetime.timedelta(days=2)
+            pb_end_calc = min(target_eergisteren, max_gsc_date) if max_gsc_date >= target_eergisteren else max_gsc_date
             pb_start_calc = max(pb_end_calc - datetime.timedelta(days=6), min_gsc_date)
 
-            # Bepaal Periode A: De 7 dagen direct vóór Periode B
             pa_end_calc = max(pb_start_calc - datetime.timedelta(days=1), min_gsc_date)
             pa_start_calc = max(pa_end_calc - datetime.timedelta(days=6), min_gsc_date)
 
@@ -865,20 +857,20 @@ try:
                 p_col1, p_col2 = st.columns(2)
                 
                 with p_col1:
-                    st.markdown("**⚪ 周期 A (前一周 / Vorige week):**")
+                    st.markdown("**⚪ 周期 A:**")
                     pa_c1, pa_c2 = st.columns(2)
                     with pa_c1:
-                        sel_pa_start = st.date_input("开始日期 A:", value=pa_start_calc, min_value=min_gsc_date, max_value=datetime.date(2030, 1, 1), key="gsc_pa_start")
+                        sel_pa_start = st.date_input("开始日期 A:", value=pa_start_calc, min_value=min_gsc_date, max_value=datetime.date(2030, 1, 1), key="wow_pa_s")
                     with pa_c2:
-                        sel_pa_end = st.date_input("结束日期 A:", value=pa_end_calc, min_value=min_gsc_date, max_value=datetime.date(2030, 1, 1), key="gsc_pa_end")
+                        sel_pa_end = st.date_input("结束日期 A:", value=pa_end_calc, min_value=min_gsc_date, max_value=datetime.date(2030, 1, 1), key="wow_pa_e")
                 
                 with p_col2:
-                    st.markdown("**🔵 周期 B (最近一周 / Afgelopen week -2d):**")
+                    st.markdown("**🔵 周期 B:**")
                     pb_c1, pb_c2 = st.columns(2)
                     with pb_c1:
-                        sel_pb_start = st.date_input("开始日期 B:", value=pb_start_calc, min_value=min_gsc_date, max_value=datetime.date(2030, 1, 1), key="gsc_pb_start")
+                        sel_pb_start = st.date_input("开始日期 B:", value=pb_start_calc, min_value=min_gsc_date, max_value=datetime.date(2030, 1, 1), key="wow_pb_s")
                     with pb_c2:
-                        sel_pb_end = st.date_input("结束日期 B:", value=pb_end_calc, min_value=min_gsc_date, max_value=datetime.date(2030, 1, 1), key="gsc_pb_end")
+                        sel_pb_end = st.date_input("结束日期 B:", value=pb_end_calc, min_value=min_gsc_date, max_value=datetime.date(2030, 1, 1), key="wow_pb_e")
                 st.markdown("</div>", unsafe_allow_html=True)
 
             if sel_pa_start > sel_pa_end:
