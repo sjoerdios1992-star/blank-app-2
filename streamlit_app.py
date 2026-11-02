@@ -271,7 +271,7 @@ def load_nl_vs_total_data():
     clean_tot = process_tab(df_tot_raw)
     clean_nl = process_tab(df_nl_raw)
 
-    if clean_tot.empty or clean_nl.empty:
+    if clean_tot.empty and clean_nl.empty:
         return pd.DataFrame()
 
     df_comp = pd.merge(clean_nl, clean_tot, on='Datum', suffixes=('_NL', '_Total'), how='outer').sort_values('Datum')
@@ -445,7 +445,7 @@ try:
     global_max_date = max(all_max_dates) if all_max_dates else datetime.date.today()
     min_date = df['Datum'].min().date()
 
-    # Standaard: einddatum = vandaag - 2 dagen (afgetopt op de nieuwste data in de sheets)
+    # Standaard: vandaag - 2 dagen (afgetopt op de nieuwste data in de sheets)
     target_end = datetime.date.today() - datetime.timedelta(days=2)
     default_end = min(target_end, global_max_date) if global_max_date >= target_end else global_max_date
     default_start = max(default_end - pd.Timedelta(days=30), min_date)
@@ -862,17 +862,17 @@ try:
                     st.markdown("**⚪ 周期 A:**")
                     pa_c1, pa_c2 = st.columns(2)
                     with pa_c1:
-                        sel_pa_start = st.date_input("开始日期 A:", value=pa_start_calc, min_value=min_gsc_date, max_value=datetime.date(2030, 1, 1), key="wow_pa_s_v2")
+                        sel_pa_start = st.date_input("开始日期 A:", value=pa_start_calc, min_value=min_gsc_date, max_value=datetime.date(2030, 1, 1), key="wow_pa_s_v3")
                     with pa_c2:
-                        sel_pa_end = st.date_input("结束日期 A:", value=pa_end_calc, min_value=min_gsc_date, max_value=datetime.date(2030, 1, 1), key="wow_pa_e_v2")
+                        sel_pa_end = st.date_input("结束日期 A:", value=pa_end_calc, min_value=min_gsc_date, max_value=datetime.date(2030, 1, 1), key="wow_pa_e_v3")
                 
                 with p_col2:
                     st.markdown("**🔵 周期 B:**")
                     pb_c1, pb_c2 = st.columns(2)
                     with pb_c1:
-                        sel_pb_start = st.date_input("开始日期 B:", value=pb_start_calc, min_value=min_gsc_date, max_value=datetime.date(2030, 1, 1), key="wow_pb_s_v2")
+                        sel_pb_start = st.date_input("开始日期 B:", value=pb_start_calc, min_value=min_gsc_date, max_value=datetime.date(2030, 1, 1), key="wow_pb_s_v3")
                     with pb_c2:
-                        sel_pb_end = st.date_input("结束日期 B:", value=pb_end_calc, min_value=min_gsc_date, max_value=datetime.date(2030, 1, 1), key="wow_pb_e_v2")
+                        sel_pb_end = st.date_input("结束日期 B:", value=pb_end_calc, min_value=min_gsc_date, max_value=datetime.date(2030, 1, 1), key="wow_pb_e_v3")
                 st.markdown("</div>", unsafe_allow_html=True)
 
             if sel_pa_start > sel_pa_end:
@@ -1034,6 +1034,7 @@ try:
         if df_comparison.empty:
             st.warning("⚠️ Geen gegevens gevonden in tabbladen 'Total website all data' of 'Dutch website all data'. Controleer of de namen exact overeenkomen in Google Sheets.")
         else:
+            # GEEN AFKAPPING MEER: Tab 5 gebruikt de allernieuwste datum uit de sheet
             comp_latest = df_comparison['Datum'].max().date()
             eff_end = max(end_date, comp_latest)
 
